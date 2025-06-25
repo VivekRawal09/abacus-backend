@@ -10,20 +10,6 @@ const generateToken = (userId, email, role) => {
   );
 };
 
-const hashPassword = async (req, res) => {
-  try {
-    const { password } = req.body;
-    const hash = await bcrypt.hash(password, 12);
-    res.json({
-      success: true,
-      password: password,
-      hash: hash
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -79,6 +65,12 @@ const login = async (req, res) => {
       });
     }
 
+    // Update last login
+    await supabase
+      .from('users')
+      .update({ last_login: new Date().toISOString() })
+      .eq('id', user.id);
+
     // Generate JWT token
     const token = generateToken(user.id, user.email, user.role);
 
@@ -107,4 +99,52 @@ const login = async (req, res) => {
   }
 };
 
-module.exports = { login, hashPassword };
+const getProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const { data: user, error } = await supabase
+      .from('users')
+      .select(`
+        id, first_name, last_name, email, role, phone, 
+        status, created_at, date_of_birth, gender,
+        institutes(name),
+        zones(name)
+      `)
+      .eq('id', userId)
+      .single();
+
+    if (error) {
+      console.error('Profile fetch error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch profile'
+      });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,
+        institute_name: user.institutes?.name || null,
+        zone_name: user.zones?.name || null,
+        is_active: user.status === 'active',
+        created_at: user.created_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+module.exports = { login, getProfile };

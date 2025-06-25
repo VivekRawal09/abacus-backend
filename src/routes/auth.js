@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { login, hashPassword } = require('../controllers/auth');
+const { login, getProfile } = require('../controllers/auth');
+const { authenticateToken } = require('../middleware/auth');
 
 // Public routes
 router.post('/login', login);
-router.post('/hash', hashPassword); // Temporary for testing
+
+// Protected routes
+router.get('/profile', authenticateToken, getProfile);
 
 module.exports = router;
