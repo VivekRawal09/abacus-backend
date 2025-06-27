@@ -1,6 +1,7 @@
 const YouTubeService = require('../services/youtube-service');
 const { supabase } = require('../config/database');
 
+// YOUR ORIGINAL FUNCTIONS (from your first file)
 const getAllVideos = async (req, res) => {
   try {
     const { 
@@ -216,10 +217,253 @@ const getVideoCategories = async (req, res) => {
   }
 };
 
+// NEW FUNCTIONS (the ones you added)
+const updateVideo = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      title,
+      description,
+      category,
+      difficulty_level,
+      course_order,
+      tags,
+      status
+    } = req.body;
+
+    // Check if video exists
+    const { data: existingVideo, error: fetchError } = await supabase
+      .from('video_content')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingVideo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Prepare update data
+    const updateData = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (title !== undefined) updateData.title = title;
+    if (description !== undefined) updateData.description = description;
+    if (category !== undefined) updateData.category = category;
+    if (difficulty_level !== undefined) updateData.difficulty_level = difficulty_level;
+    if (course_order !== undefined) updateData.course_order = course_order;
+    if (tags !== undefined) updateData.tags = tags;
+    if (status !== undefined) updateData.status = status;
+
+    // Update video
+    const { data: updatedVideo, error } = await supabase
+      .from('video_content')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Update video error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update video'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Video updated successfully',
+      data: updatedVideo
+    });
+
+  } catch (error) {
+    console.error('Update video error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+const deleteVideo = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if video exists
+    const { data: existingVideo, error: fetchError } = await supabase
+      .from('video_content')
+      .select('id, title')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingVideo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    // Soft delete - set status to inactive
+    const { error } = await supabase
+      .from('video_content')
+      .update({ 
+        status: 'inactive',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Delete video error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete video'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Video deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete video error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+const updateVideoStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    const { data: updatedVideo, error } = await supabase
+      .from('video_content')
+      .update({ 
+        status: is_active ? 'active' : 'inactive',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(404).json({
+        success: false,
+        message: 'Video not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Video ${is_active ? 'activated' : 'deactivated'} successfully`,
+      data: updatedVideo
+    });
+
+  } catch (error) {
+    console.error('Update video status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+const bulkDeleteVideos = async (req, res) => {
+  try {
+    const { videoIds } = req.body;
+
+    if (!videoIds || !Array.isArray(videoIds) || videoIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Video IDs array is required'
+      });
+    }
+
+    // Soft delete - set status to inactive
+    const { error } = await supabase
+      .from('video_content')
+      .update({ 
+        status: 'inactive',
+        updated_at: new Date().toISOString()
+      })
+      .in('id', videoIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${videoIds.length} videos deleted successfully`
+    });
+
+  } catch (error) {
+    console.error('Bulk delete videos error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+const getVideoStats = async (req, res) => {
+  try {
+    // Get basic video counts
+    const { data: videos, error } = await supabase
+      .from('video_content')
+      .select('status, category, difficulty_level, view_count');
+
+    if (error) throw error;
+
+    const stats = {
+      total_videos: videos.length,
+      active_videos: videos.filter(v => v.status === 'active').length,
+      inactive_videos: videos.filter(v => v.status === 'inactive').length,
+      total_views: videos.reduce((sum, v) => sum + (v.view_count || 0), 0),
+      by_category: {},
+      by_difficulty: {}
+    };
+
+    // Group by category
+    videos.forEach(video => {
+      const category = video.category || 'uncategorized';
+      stats.by_category[category] = (stats.by_category[category] || 0) + 1;
+    });
+
+    // Group by difficulty
+    videos.forEach(video => {
+      const difficulty = video.difficulty_level || 'unspecified';
+      stats.by_difficulty[difficulty] = (stats.by_difficulty[difficulty] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      stats: stats
+    });
+
+  } catch (error) {
+    console.error('Get video stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
 module.exports = {
   getAllVideos,
   getVideoById,
   addVideoFromYouTube,
   searchYouTubeVideos,
-  getVideoCategories
+  getVideoCategories,
+  updateVideo,
+  deleteVideo,
+  updateVideoStatus,
+  bulkDeleteVideos,
+  getVideoStats
 };
