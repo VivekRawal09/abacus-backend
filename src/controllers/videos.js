@@ -1,7 +1,7 @@
 const YouTubeService = require('../services/youtube-service');
 const { supabase } = require('../config/database');
 
-// YOUR ORIGINAL FUNCTIONS (from your first file)
+// FIXED: Added proper pagination count
 const getAllVideos = async (req, res) => {
   try {
     const { 
@@ -14,7 +14,7 @@ const getAllVideos = async (req, res) => {
 
     let query = supabase
       .from('video_content')
-      .select('*')
+      .select('*', { count: 'exact' }) // FIXED: Added count parameter
       .eq('status', 'active');
 
     if (category) {
@@ -56,8 +56,8 @@ const getAllVideos = async (req, res) => {
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
-          total: count,
-          pages: Math.ceil(count / limit)
+          total: count, // FIXED: Now returns actual count
+          pages: Math.ceil(count / limit) // FIXED: Now calculates correct pages
         }
       }
     });
@@ -160,18 +160,22 @@ const addVideoFromYouTube = async (req, res) => {
   }
 };
 
+// FIXED: Accept both 'q' and 'query' parameters for YouTube search
 const searchYouTubeVideos = async (req, res) => {
   try {
-    const { query, maxResults = 10 } = req.query;
+    const { q, query, maxResults = 10 } = req.query;
+    
+    // FIXED: Accept both 'q' and 'query' parameters
+    const searchQuery = q || query;
 
-    if (!query) {
+    if (!searchQuery) {
       return res.status(400).json({
         success: false,
-        message: 'Search query is required'
+        message: 'Search query is required (use ?q=your_search_term)'
       });
     }
 
-    const videos = await YouTubeService.searchVideos(query, maxResults);
+    const videos = await YouTubeService.searchVideos(searchQuery, maxResults);
 
     res.json({
       success: true,
@@ -217,7 +221,6 @@ const getVideoCategories = async (req, res) => {
   }
 };
 
-// NEW FUNCTIONS (the ones you added)
 const updateVideo = async (req, res) => {
   try {
     const { id } = req.params;

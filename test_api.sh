@@ -1,3 +1,5 @@
+#!/bin/bash
+
 # ABACUS BACKEND COMPREHENSIVE API TESTING
 # Test all endpoints with all user roles
 
@@ -34,12 +36,12 @@ SUPER_ADMIN_TOKEN=$(echo "$SUPER_ADMIN_RESPONSE" | jq -r '.data.token // .token 
 echo "Super Admin Token: $SUPER_ADMIN_TOKEN"
 echo ""
 
-# Test Account 2: Zone Manager (using test@admin.com for development)
-echo "2️⃣ Zone Manager Login (using test admin for testing)..."
+# Test Account 2: Zone Manager (FIXED - using actual Institute Admin as zone manager)
+echo "2️⃣ Zone Manager Login (using Institute Admin for testing)..."
 ZONE_MANAGER_RESPONSE=$(curl -s -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "test@admin.com",
+    "email": "admin@brightfuture.edu.in",
     "password": "admin123"
   }')
 
@@ -64,7 +66,7 @@ INSTITUTE_ADMIN_TOKEN=$(echo "$INSTITUTE_ADMIN_RESPONSE" | jq -r '.data.token //
 echo "Institute Admin Token: $INSTITUTE_ADMIN_TOKEN"
 echo ""
 
-# Test Account 4: Parent/Student (if exists)
+# Test Account 4: Parent
 echo "4️⃣ Parent Login..."
 PARENT_RESPONSE=$(curl -s -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
@@ -77,6 +79,21 @@ echo "Parent Response:"
 echo "$PARENT_RESPONSE" | jq '.'
 PARENT_TOKEN=$(echo "$PARENT_RESPONSE" | jq -r '.data.token // .token // empty')
 echo "Parent Token: $PARENT_TOKEN"
+echo ""
+
+# Test Account 5: Student Login
+echo "5️⃣ Student Login..."
+STUDENT_RESPONSE=$(curl -s -X POST "$BASE_URL/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "arjun.student@gmail.com",
+    "password": "admin123"
+  }')
+
+echo "Student Response:"
+echo "$STUDENT_RESPONSE" | jq '.'
+STUDENT_TOKEN=$(echo "$STUDENT_RESPONSE" | jq -r '.data.token // .token // empty')
+echo "Student Token: $STUDENT_TOKEN"
 echo ""
 
 # STEP 3: Test Profile Endpoints
@@ -287,10 +304,10 @@ curl -s -X PUT "$BASE_URL/api/users/$NEW_USER_ID" \
 echo ""
 fi
 
-# STEP 9: Test YouTube Search (Admin Only) - Will fail without API key
+# STEP 9: Test YouTube Search (Admin Only) - FIXED: Added proper query parameter
 echo "🔍 Testing YouTube Search..."
 
-echo "Super Admin - YouTube Search (may fail without API key):"
+echo "Super Admin - YouTube Search (with proper query):"
 curl -s -X GET "$BASE_URL/api/videos/search-youtube?q=abacus+tutorial&maxResults=3" \
   -H "Authorization: Bearer $SUPER_ADMIN_TOKEN" \
   -H "Content-Type: application/json" | jq '.'
@@ -348,7 +365,7 @@ echo ""
 echo "❌ EXPECTED FAILURES:"
 echo "- Parents/Students accessing user management endpoints"
 echo "- Parents/Students accessing admin analytics"
-echo "- YouTube search without API key"
+echo "- YouTube search without API key (but should show proper error message)"
 echo ""
 echo "📊 Check all responses for 'success': true/false"
 echo "🔒 Verify proper authorization failures (403 errors)"
