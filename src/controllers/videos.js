@@ -196,12 +196,12 @@ const getVideoCategories = async (req, res) => {
     const { data: categories, error } = await supabase
       .from('video_content')
       .select('category')
-      .eq('status', 'active')
-      .group('category');
+      .eq('status', 'active');
 
     if (error) throw error;
 
-    const uniqueCategories = [...new Set(categories.map(item => item.category))];
+    // Extract unique categories manually
+    const uniqueCategories = [...new Set(categories.map(item => item.category))].filter(Boolean);
 
     res.json({
       success: true,

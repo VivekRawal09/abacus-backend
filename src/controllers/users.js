@@ -575,7 +575,7 @@ const validateUserCreation = [
   body('email').isEmail().withMessage('Valid email is required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   body('role').isIn(['student', 'teacher', 'parent', 'institute_admin', 'zone_manager', 'super_admin']).withMessage('Valid role is required'),
-  body('phone').optional().isMobilePhone().withMessage('Valid phone number required'),
+  body('phone').optional().matches(/^[+]?[\d\s\-()]{10,15}$/).withMessage('Valid phone number required (10-15 digits)'),
   body('institute_id').optional().isInt().withMessage('Valid institute ID required'),
   body('zone_id').optional().isInt().withMessage('Valid zone ID required')
 ];
