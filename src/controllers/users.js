@@ -113,6 +113,9 @@ const importUsers = async (req, res) => {
       JSON.stringify(rows.slice(0, 2), null, 2)
     );
 
+    // Debug: Show all roles found in file
+    console.log('🔍 All roles found in file:', [...new Set(rows.map(row => row.role).filter(Boolean))]);
+
     // Process users
     const users = [];
     const errors = [];
@@ -149,42 +152,68 @@ const importUsers = async (req, res) => {
         console.log(`🔐 Hashing password for row ${rowNum}...`);
         const password_hash = await bcrypt.hash(row.password.toString(), 12);
 
-        const user = {
-          first_name: row.first_name || "",
-          last_name: row.last_name || "",
-          email: row.email.toLowerCase().trim(),
-          password_hash,
-          role: row.role || "student",
-          phone: row.phone || null,
-          institute_id: row.institute_id ? parseInt(row.institute_id) : null,
-          zone_id: row.zone_id ? parseInt(row.zone_id) : null,
-          status: row.status || "active",
-          date_of_birth: convertExcelDate(row.date_of_birth), // ← CHANGED THIS LINE
-          gender: row.gender || null,
-          address: row.address || null,
-          created_at: new Date().toISOString(),
+        // IMPROVED ROLE VALIDATION
+        // Normalize and validate role first
+        let userRole = (row.role || "student").toLowerCase().trim();
+
+        // Handle common role variations
+        const roleMapping = {
+          'student': 'student',
+          'teacher': 'teacher', 
+          'parent': 'parent',
+          'institute_admin': 'institute_admin',
+          'instituteadmin': 'institute_admin',
+          'institute admin': 'institute_admin',
+          'admin': 'institute_admin',
+          'zone_manager': 'zone_manager',
+          'zonemanager': 'zone_manager',
+          'zone manager': 'zone_manager',
+          'manager': 'zone_manager',
+          'super_admin': 'super_admin',
+          'superadmin': 'super_admin',
+          'super admin': 'super_admin',
+          'super': 'super_admin'
         };
+
+        // Map the role or use the original if valid
+        userRole = roleMapping[userRole] || userRole;
 
         // Validate role
         const validRoles = [
           "student",
-          "teacher",
+          "teacher", 
           "parent",
           "institute_admin",
           "zone_manager",
           "super_admin",
         ];
-        if (!validRoles.includes(user.role)) {
+
+        if (!validRoles.includes(userRole)) {
           errors.push(
-            `Row ${rowNum}: Invalid role "${
-              user.role
-            }". Valid roles: ${validRoles.join(", ")}`
+            `Row ${rowNum}: Invalid role "${row.role || 'student'}". Valid roles: ${validRoles.join(", ")}`
           );
           continue;
         }
 
+        const user = {
+          first_name: row.first_name || "",
+          last_name: row.last_name || "",
+          email: row.email.toLowerCase().trim(),
+          password_hash,
+          role: userRole,  // Use the validated and normalized role
+          phone: row.phone || null,
+          institute_id: row.institute_id ? parseInt(row.institute_id) : null,
+          zone_id: row.zone_id ? parseInt(row.zone_id) : null,
+          status: row.status || "active",
+          date_of_birth: convertExcelDate(row.date_of_birth),
+          gender: row.gender || null,
+          address: row.address || null,
+          created_at: new Date().toISOString(),
+        };
+
         users.push(user);
-        console.log(`✅ User processed for row ${rowNum}: ${user.email}`);
+        console.log(`✅ User processed for row ${rowNum}: ${user.email} (role: ${user.role})`);
+        
       } catch (hashError) {
         console.error(
           `❌ Error hashing password for row ${rowNum}:`,
