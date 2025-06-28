@@ -1,94 +1,138 @@
-const { supabase } = require('../config/database');
-const bcrypt = require('bcryptjs');
-const { body, validationResult } = require('express-validator');
-const XLSX = require('xlsx');
+const { supabase } = require("../config/database");
+const bcrypt = require("bcryptjs");
+const { body, validationResult } = require("express-validator");
+const XLSX = require("xlsx");
+
+/**
+ * Convert Excel date serial number to proper date string
+ * Excel stores dates as serial numbers (days since 1900-01-01)
+ */
+const convertExcelDate = (excelDate) => {
+  if (!excelDate) return null;
+
+  // If it's already a proper date string, return as is
+  if (typeof excelDate === "string" && excelDate.includes("-")) {
+    return excelDate;
+  }
+
+  // If it's an Excel serial number
+  if (
+    typeof excelDate === "number" ||
+    (typeof excelDate === "string" && !isNaN(excelDate))
+  ) {
+    const serialNumber =
+      typeof excelDate === "string" ? parseFloat(excelDate) : excelDate;
+
+    // Excel epoch starts at 1900-01-01, but has a leap year bug
+    const excelEpoch = new Date(1899, 11, 30); // December 30, 1899
+    const date = new Date(
+      excelEpoch.getTime() + serialNumber * 24 * 60 * 60 * 1000
+    );
+
+    // Format as YYYY-MM-DD
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }
+
+  return null;
+};
 
 const importUsers = async (req, res) => {
-  console.log('🔄 Import Users - Starting process...');
-  console.log('📁 File received:', !!req.file);
-  console.log('👤 User info:', req.user ? { id: req.user.id, role: req.user.role } : 'No user');
-  console.log('📋 Headers:', req.headers['content-type']);
+  console.log("🔄 Import Users - Starting process...");
+  console.log("📁 File received:", !!req.file);
+  console.log(
+    "👤 User info:",
+    req.user ? { id: req.user.id, role: req.user.role } : "No user"
+  );
+  console.log("📋 Headers:", req.headers["content-type"]);
 
   // Check if file is uploaded
   if (!req.file) {
-    console.log('❌ No file uploaded');
-    return res.status(400).json({ 
-      success: false, 
-      message: 'No file uploaded',
-      details: 'Please select a valid Excel file (.xlsx or .xls)'
+    console.log("❌ No file uploaded");
+    return res.status(400).json({
+      success: false,
+      message: "No file uploaded",
+      details: "Please select a valid Excel file (.xlsx or .xls)",
     });
   }
 
-  console.log('📊 File details:', {
+  console.log("📊 File details:", {
     originalname: req.file.originalname,
     mimetype: req.file.mimetype,
     size: req.file.size,
-    bufferLength: req.file.buffer?.length
+    bufferLength: req.file.buffer?.length,
   });
 
   try {
     // Validate file type
     const validMimeTypes = [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-      'application/vnd.ms-excel', // .xls
-      'application/octet-stream' // sometimes Excel files come as this
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+      "application/vnd.ms-excel", // .xls
+      "application/octet-stream", // sometimes Excel files come as this
     ];
 
     if (!validMimeTypes.includes(req.file.mimetype)) {
-      console.log('❌ Invalid file type:', req.file.mimetype);
+      console.log("❌ Invalid file type:", req.file.mimetype);
       return res.status(400).json({
         success: false,
-        message: 'Invalid file type. Please upload an Excel file (.xlsx or .xls)',
-        receivedType: req.file.mimetype
+        message:
+          "Invalid file type. Please upload an Excel file (.xlsx or .xls)",
+        receivedType: req.file.mimetype,
       });
     }
 
     // Parse Excel file
-    console.log('📖 Reading Excel file...');
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    console.log('📃 Worksheets found:', workbook.SheetNames);
+    console.log("📖 Reading Excel file...");
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    console.log("📃 Worksheets found:", workbook.SheetNames);
 
     if (workbook.SheetNames.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'No worksheets found in the Excel file'
+        message: "No worksheets found in the Excel file",
       });
     }
 
     const sheetName = workbook.SheetNames[0];
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-    console.log('📊 Rows parsed:', rows.length);
+    console.log("📊 Rows parsed:", rows.length);
 
     if (rows.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'No data found in the Excel file'
+        message: "No data found in the Excel file",
       });
     }
 
     // Log first few rows for debugging
-    console.log('🔍 Sample data (first 2 rows):', JSON.stringify(rows.slice(0, 2), null, 2));
+    console.log(
+      "🔍 Sample data (first 2 rows):",
+      JSON.stringify(rows.slice(0, 2), null, 2)
+    );
 
     // Process users
     const users = [];
     const errors = [];
-    
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2; // +2 because Excel rows start at 1 and we have headers
-      
+
       // Skip empty rows
       if (!row.email && !row.first_name && !row.last_name) {
         console.log(`⏭️ Skipping empty row ${rowNum}`);
         continue;
       }
-      
+
       // Validate required fields
       if (!row.email) {
         errors.push(`Row ${rowNum}: Email is required`);
         continue;
       }
-      
+
       if (!row.password) {
         errors.push(`Row ${rowNum}: Password is required`);
         continue;
@@ -104,57 +148,76 @@ const importUsers = async (req, res) => {
       try {
         console.log(`🔐 Hashing password for row ${rowNum}...`);
         const password_hash = await bcrypt.hash(row.password.toString(), 12);
-        
+
         const user = {
-          first_name: row.first_name || '',
-          last_name: row.last_name || '',
+          first_name: row.first_name || "",
+          last_name: row.last_name || "",
           email: row.email.toLowerCase().trim(),
           password_hash,
-          role: row.role || 'student',
+          role: row.role || "student",
           phone: row.phone || null,
           institute_id: row.institute_id ? parseInt(row.institute_id) : null,
           zone_id: row.zone_id ? parseInt(row.zone_id) : null,
-          status: row.status || 'active',
-          date_of_birth: row.date_of_birth || null,
+          status: row.status || "active",
+          date_of_birth: convertExcelDate(row.date_of_birth), // ← CHANGED THIS LINE
           gender: row.gender || null,
           address: row.address || null,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
         };
 
         // Validate role
-        const validRoles = ['student', 'teacher', 'parent', 'institute_admin', 'zone_manager', 'super_admin'];
+        const validRoles = [
+          "student",
+          "teacher",
+          "parent",
+          "institute_admin",
+          "zone_manager",
+          "super_admin",
+        ];
         if (!validRoles.includes(user.role)) {
-          errors.push(`Row ${rowNum}: Invalid role "${user.role}". Valid roles: ${validRoles.join(', ')}`);
+          errors.push(
+            `Row ${rowNum}: Invalid role "${
+              user.role
+            }". Valid roles: ${validRoles.join(", ")}`
+          );
           continue;
         }
 
         users.push(user);
         console.log(`✅ User processed for row ${rowNum}: ${user.email}`);
-        
       } catch (hashError) {
-        console.error(`❌ Error hashing password for row ${rowNum}:`, hashError);
+        console.error(
+          `❌ Error hashing password for row ${rowNum}:`,
+          hashError
+        );
         errors.push(`Row ${rowNum}: Failed to process password`);
       }
     }
 
-    console.log(`📊 Processing complete: ${users.length} valid users, ${errors.length} errors`);
+    console.log(
+      `📊 Processing complete: ${users.length} valid users, ${errors.length} errors`
+    );
 
     if (users.length === 0) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'No valid users found in file',
+      return res.status(400).json({
+        success: false,
+        message: "No valid users found in file",
         errors: errors.slice(0, 10), // Limit to first 10 errors
-        totalErrors: errors.length
+        totalErrors: errors.length,
       });
     }
 
     // Check for duplicate emails in the batch
     const emailCounts = {};
     const duplicateEmails = [];
-    
+
     users.forEach((user, index) => {
       if (emailCounts[user.email]) {
-        duplicateEmails.push(`Duplicate email in batch: ${user.email} (rows ${emailCounts[user.email]} and ${index + 2})`);
+        duplicateEmails.push(
+          `Duplicate email in batch: ${user.email} (rows ${
+            emailCounts[user.email]
+          } and ${index + 2})`
+        );
       } else {
         emailCounts[user.email] = index + 2;
       }
@@ -163,58 +226,62 @@ const importUsers = async (req, res) => {
     if (duplicateEmails.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Duplicate emails found in the file',
-        errors: duplicateEmails
+        message: "Duplicate emails found in the file",
+        errors: duplicateEmails,
       });
     }
 
     // Check for existing emails in database
-    console.log('🔍 Checking for existing emails in database...');
-    const emailsToCheck = users.map(u => u.email);
+    console.log("🔍 Checking for existing emails in database...");
+    const emailsToCheck = users.map((u) => u.email);
     const { data: existingUsers, error: checkError } = await supabase
-      .from('users')
-      .select('email')
-      .in('email', emailsToCheck);
+      .from("users")
+      .select("email")
+      .in("email", emailsToCheck);
 
     if (checkError) {
-      console.error('❌ Database check error:', checkError);
+      console.error("❌ Database check error:", checkError);
       return res.status(500).json({
         success: false,
-        message: 'Failed to check for existing users',
-        error: checkError.message
+        message: "Failed to check for existing users",
+        error: checkError.message,
       });
     }
 
     if (existingUsers && existingUsers.length > 0) {
-      const existingEmails = existingUsers.map(u => u.email);
+      const existingEmails = existingUsers.map((u) => u.email);
       return res.status(400).json({
         success: false,
-        message: 'Some email addresses already exist in the system',
-        existingEmails: existingEmails
+        message: "Some email addresses already exist in the system",
+        existingEmails: existingEmails,
       });
     }
 
     // Insert users in batches to avoid hitting limits
-    console.log('💾 Inserting users into database...');
+    console.log("💾 Inserting users into database...");
     const batchSize = 100; // Supabase has limits on bulk inserts
     const insertedUsers = [];
-    
+
     for (let i = 0; i < users.length; i += batchSize) {
       const batch = users.slice(i, i + batchSize);
-      console.log(`📦 Inserting batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(users.length/batchSize)} (${batch.length} users)...`);
-      
+      console.log(
+        `📦 Inserting batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
+          users.length / batchSize
+        )} (${batch.length} users)...`
+      );
+
       const { data, error } = await supabase
-        .from('users')
+        .from("users")
         .insert(batch)
-        .select('id, email, first_name, last_name, role');
+        .select("id, email, first_name, last_name, role");
 
       if (error) {
-        console.error('❌ Database insert error:', error);
-        return res.status(500).json({ 
-          success: false, 
+        console.error("❌ Database insert error:", error);
+        return res.status(500).json({
+          success: false,
           message: `Database error during batch insert: ${error.message}`,
           details: error.details || error.hint,
-          batchNumber: Math.floor(i/batchSize) + 1
+          batchNumber: Math.floor(i / batchSize) + 1,
         });
       }
 
@@ -223,8 +290,10 @@ const importUsers = async (req, res) => {
       }
     }
 
-    console.log('✅ Import completed successfully');
-    console.log(`📊 Final stats: ${insertedUsers.length} users imported, ${errors.length} errors`);
+    console.log("✅ Import completed successfully");
+    console.log(
+      `📊 Final stats: ${insertedUsers.length} users imported, ${errors.length} errors`
+    );
 
     const response = {
       success: true,
@@ -233,9 +302,9 @@ const importUsers = async (req, res) => {
         totalProcessed: rows.length,
         successfulImports: insertedUsers.length,
         errors: errors.length,
-        skipped: rows.length - users.length - errors.length
+        skipped: rows.length - users.length - errors.length,
       },
-      data: insertedUsers
+      data: insertedUsers,
     };
 
     // Include errors if any (for informational purposes)
@@ -245,16 +314,15 @@ const importUsers = async (req, res) => {
     }
 
     res.json(response);
-
   } catch (err) {
-    console.error('❌ Import process error:', err);
-    console.error('Stack trace:', err.stack);
-    
-    res.status(500).json({ 
-      success: false, 
-      message: 'Internal server error during import process',
+    console.error("❌ Import process error:", err);
+    console.error("Stack trace:", err.stack);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error during import process",
       error: err.message,
-      details: 'Please check the file format and try again'
+      details: "Please check the file format and try again",
     });
   }
 };
@@ -262,54 +330,59 @@ const importUsers = async (req, res) => {
 // GET /api/users - Get all users with pagination (EXISTING - ENHANCED)
 const getAllUsers = async (req, res) => {
   try {
-    const { 
-      page = 1, 
-      limit = 20, 
-      role, 
-      search, 
+    const {
+      page = 1,
+      limit = 20,
+      role,
+      search,
       status,
-      institute_id 
+      institute_id,
     } = req.query;
 
-    let query = supabase
-      .from('users')
-      .select(`
+    let query = supabase.from("users").select(
+      `
         id, first_name, last_name, email, role, phone,
         status, created_at, last_login, date_of_birth, gender,
         institute_id, zone_id,
         institutes(name),
         zones(name)
-      `, { count: 'exact' });
+      `,
+      { count: "exact" }
+    );
 
     // Apply filters
     if (role) {
-      query = query.eq('role', role);
+      query = query.eq("role", role);
     }
 
     if (status) {
-      query = query.eq('status', status);
+      query = query.eq("status", status);
     }
 
     if (institute_id) {
-      query = query.eq('institute_id', institute_id);
+      query = query.eq("institute_id", institute_id);
     }
 
     if (search) {
-      query = query.or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`);
+      query = query.or(
+        `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`
+      );
     }
 
     // Apply pagination
     const from = (page - 1) * limit;
     const to = from + limit - 1;
 
-    const { data: users, error, count } = await query
-      .range(from, to)
-      .order('created_at', { ascending: false });
+    const {
+      data: users,
+      error,
+      count,
+    } = await query.range(from, to).order("created_at", { ascending: false });
 
     if (error) throw error;
 
     // Format response to match frontend expectations
-    const formattedUsers = users.map(user => ({
+    const formattedUsers = users.map((user) => ({
       id: user.id,
       first_name: user.first_name,
       last_name: user.last_name,
@@ -318,13 +391,13 @@ const getAllUsers = async (req, res) => {
       phone: user.phone,
       institute_name: user.institutes?.name || null,
       zone_name: user.zones?.name || null,
-      is_active: user.status === 'active',
+      is_active: user.status === "active",
       last_login: user.last_login,
       created_at: user.created_at,
       date_of_birth: user.date_of_birth,
       gender: user.gender,
       institute_id: user.institute_id,
-      zone_id: user.zone_id
+      zone_id: user.zone_id,
     }));
 
     res.json({
@@ -334,15 +407,14 @@ const getAllUsers = async (req, res) => {
         currentPage: parseInt(page),
         totalPages: Math.ceil(count / limit),
         totalItems: count,
-        pageSize: parseInt(limit)
-      }
+        pageSize: parseInt(limit),
+      },
     });
-
   } catch (error) {
-    console.error('Get users error:', error);
+    console.error("Get users error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -351,8 +423,8 @@ const getAllUsers = async (req, res) => {
 const getUserStats = async (req, res) => {
   try {
     const { data: users, error } = await supabase
-      .from('users')
-      .select('role, status');
+      .from("users")
+      .select("role, status");
 
     if (error) throw error;
 
@@ -361,22 +433,21 @@ const getUserStats = async (req, res) => {
       return acc;
     }, {});
 
-    const activeUsers = users.filter(u => u.status === 'active').length;
+    const activeUsers = users.filter((u) => u.status === "active").length;
 
     res.json({
       success: true,
       stats: {
         total_users: users.length,
         active_users: activeUsers,
-        by_role: statsByRole
-      }
+        by_role: statsByRole,
+      },
     });
-
   } catch (error) {
-    console.error('Get user stats error:', error);
+    console.error("Get user stats error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -387,21 +458,23 @@ const getUserById = async (req, res) => {
     const { id } = req.params;
 
     const { data: user, error } = await supabase
-      .from('users')
-      .select(`
+      .from("users")
+      .select(
+        `
         id, first_name, last_name, email, role, phone,
         status, created_at, last_login, date_of_birth, gender, address,
         institute_id, zone_id,
         institutes(name),
         zones(name)
-      `)
-      .eq('id', id)
+      `
+      )
+      .eq("id", id)
       .single();
 
     if (error) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
@@ -415,26 +488,25 @@ const getUserById = async (req, res) => {
       phone: user.phone,
       institute_name: user.institutes?.name || null,
       zone_name: user.zones?.name || null,
-      is_active: user.status === 'active',
+      is_active: user.status === "active",
       last_login: user.last_login,
       created_at: user.created_at,
       date_of_birth: user.date_of_birth,
       gender: user.gender,
       address: user.address,
       institute_id: user.institute_id,
-      zone_id: user.zone_id
+      zone_id: user.zone_id,
     };
 
     res.json({
       success: true,
-      data: formattedUser
+      data: formattedUser,
     });
-
   } catch (error) {
-    console.error('Get user by ID error:', error);
+    console.error("Get user by ID error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -447,8 +519,8 @@ const createUser = async (req, res) => {
     if (!errors.isEmpty()) {
       return res.status(400).json({
         success: false,
-        message: 'Validation failed',
-        errors: errors.array()
+        message: "Validation failed",
+        errors: errors.array(),
       });
     }
 
@@ -463,20 +535,20 @@ const createUser = async (req, res) => {
       zone_id,
       date_of_birth,
       gender,
-      address
+      address,
     } = req.body;
 
     // Check if email already exists
     const { data: existingUser } = await supabase
-      .from('users')
-      .select('email')
-      .eq('email', email)
+      .from("users")
+      .select("email")
+      .eq("email", email)
       .single();
 
     if (existingUser) {
       return res.status(400).json({
         success: false,
-        message: 'Email already exists'
+        message: "Email already exists",
       });
     }
 
@@ -486,7 +558,7 @@ const createUser = async (req, res) => {
 
     // Create user
     const { data: newUser, error } = await supabase
-      .from('users')
+      .from("users")
       .insert({
         first_name,
         last_name,
@@ -499,17 +571,17 @@ const createUser = async (req, res) => {
         date_of_birth: date_of_birth || null,
         gender: gender || null,
         address: address || null,
-        status: 'active',
-        created_at: new Date().toISOString()
+        status: "active",
+        created_at: new Date().toISOString(),
       })
       .select()
       .single();
 
     if (error) {
-      console.error('Create user error:', error);
+      console.error("Create user error:", error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to create user'
+        message: "Failed to create user",
       });
     }
 
@@ -518,15 +590,14 @@ const createUser = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'User created successfully',
-      data: newUser
+      message: "User created successfully",
+      data: newUser,
     });
-
   } catch (error) {
-    console.error('Create user error:', error);
+    console.error("Create user error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -546,43 +617,43 @@ const updateUser = async (req, res) => {
       date_of_birth,
       gender,
       address,
-      status
+      status,
     } = req.body;
 
     // Check if user exists
     const { data: existingUser, error: fetchError } = await supabase
-      .from('users')
-      .select('id, email')
-      .eq('id', id)
+      .from("users")
+      .select("id, email")
+      .eq("id", id)
       .single();
 
     if (fetchError || !existingUser) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
     // If email is being changed, check for duplicates
     if (email && email !== existingUser.email) {
       const { data: emailCheck } = await supabase
-        .from('users')
-        .select('email')
-        .eq('email', email)
-        .neq('id', id)
+        .from("users")
+        .select("email")
+        .eq("email", email)
+        .neq("id", id)
         .single();
 
       if (emailCheck) {
         return res.status(400).json({
           success: false,
-          message: 'Email already exists'
+          message: "Email already exists",
         });
       }
     }
 
     // Prepare update data
     const updateData = {
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
     if (first_name !== undefined) updateData.first_name = first_name;
@@ -599,17 +670,17 @@ const updateUser = async (req, res) => {
 
     // Update user
     const { data: updatedUser, error } = await supabase
-      .from('users')
+      .from("users")
       .update(updateData)
-      .eq('id', id)
+      .eq("id", id)
       .select()
       .single();
 
     if (error) {
-      console.error('Update user error:', error);
+      console.error("Update user error:", error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to update user'
+        message: "Failed to update user",
       });
     }
 
@@ -618,15 +689,14 @@ const updateUser = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'User updated successfully',
-      data: updatedUser
+      message: "User updated successfully",
+      data: updatedUser,
     });
-
   } catch (error) {
-    console.error('Update user error:', error);
+    console.error("Update user error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -638,53 +708,52 @@ const deleteUser = async (req, res) => {
 
     // Check if user exists
     const { data: existingUser, error: fetchError } = await supabase
-      .from('users')
-      .select('id, role')
-      .eq('id', id)
+      .from("users")
+      .select("id, role")
+      .eq("id", id)
       .single();
 
     if (fetchError || !existingUser) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
     // Prevent deletion of super_admin users
-    if (existingUser.role === 'super_admin') {
+    if (existingUser.role === "super_admin") {
       return res.status(403).json({
         success: false,
-        message: 'Cannot delete super admin users'
+        message: "Cannot delete super admin users",
       });
     }
 
     // Soft delete - set status to inactive instead of hard delete
     const { error } = await supabase
-      .from('users')
-      .update({ 
-        status: 'inactive',
-        updated_at: new Date().toISOString()
+      .from("users")
+      .update({
+        status: "inactive",
+        updated_at: new Date().toISOString(),
       })
-      .eq('id', id);
+      .eq("id", id);
 
     if (error) {
-      console.error('Delete user error:', error);
+      console.error("Delete user error:", error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to delete user'
+        message: "Failed to delete user",
       });
     }
 
     res.json({
       success: true,
-      message: 'User deleted successfully'
+      message: "User deleted successfully",
     });
-
   } catch (error) {
-    console.error('Delete user error:', error);
+    console.error("Delete user error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -696,33 +765,32 @@ const updateUserStatus = async (req, res) => {
     const { is_active } = req.body;
 
     const { data: updatedUser, error } = await supabase
-      .from('users')
-      .update({ 
-        status: is_active ? 'active' : 'inactive',
-        updated_at: new Date().toISOString()
+      .from("users")
+      .update({
+        status: is_active ? "active" : "inactive",
+        updated_at: new Date().toISOString(),
       })
-      .eq('id', id)
+      .eq("id", id)
       .select()
       .single();
 
     if (error) {
       return res.status(404).json({
         success: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
     res.json({
       success: true,
-      message: `User ${is_active ? 'activated' : 'deactivated'} successfully`,
-      data: updatedUser
+      message: `User ${is_active ? "activated" : "deactivated"} successfully`,
+      data: updatedUser,
     });
-
   } catch (error) {
-    console.error('Update user status error:', error);
+    console.error("Update user status error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -735,47 +803,46 @@ const bulkDeleteUsers = async (req, res) => {
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'User IDs array is required'
+        message: "User IDs array is required",
       });
     }
 
     // Check for super_admin users in the list
     const { data: users, error: fetchError } = await supabase
-      .from('users')
-      .select('id, role')
-      .in('id', userIds);
+      .from("users")
+      .select("id, role")
+      .in("id", userIds);
 
     if (fetchError) throw fetchError;
 
-    const superAdmins = users.filter(u => u.role === 'super_admin');
+    const superAdmins = users.filter((u) => u.role === "super_admin");
     if (superAdmins.length > 0) {
       return res.status(403).json({
         success: false,
-        message: 'Cannot delete super admin users'
+        message: "Cannot delete super admin users",
       });
     }
 
     // Soft delete - set status to inactive
     const { error } = await supabase
-      .from('users')
-      .update({ 
-        status: 'inactive',
-        updated_at: new Date().toISOString()
+      .from("users")
+      .update({
+        status: "inactive",
+        updated_at: new Date().toISOString(),
       })
-      .in('id', userIds);
+      .in("id", userIds);
 
     if (error) throw error;
 
     res.json({
       success: true,
-      message: `${userIds.length} users deleted successfully`
+      message: `${userIds.length} users deleted successfully`,
     });
-
   } catch (error) {
-    console.error('Bulk delete users error:', error);
+    console.error("Bulk delete users error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
@@ -785,9 +852,7 @@ const exportUsers = async (req, res) => {
   try {
     const { role, status, institute_id } = req.query;
 
-    let query = supabase
-      .from('users')
-      .select(`
+    let query = supabase.from("users").select(`
         first_name, last_name, email, role, phone,
         status, created_at,
         institutes(name),
@@ -795,46 +860,76 @@ const exportUsers = async (req, res) => {
       `);
 
     // Apply filters
-    if (role) query = query.eq('role', role);
-    if (status) query = query.eq('status', status);
-    if (institute_id) query = query.eq('institute_id', institute_id);
+    if (role) query = query.eq("role", role);
+    if (status) query = query.eq("status", status);
+    if (institute_id) query = query.eq("institute_id", institute_id);
 
-    const { data: users, error } = await query
-      .order('created_at', { ascending: false });
+    const { data: users, error } = await query.order("created_at", {
+      ascending: false,
+    });
 
     if (error) throw error;
 
     // Convert to CSV format
-    const csvHeader = 'First Name,Last Name,Email,Role,Phone,Status,Institute,Zone,Created At\n';
-    const csvData = users.map(user => 
-      `"${user.first_name || ''}","${user.last_name || ''}","${user.email}","${user.role}","${user.phone || ''}","${user.status}","${user.institutes?.name || ''}","${user.zones?.name || ''}","${user.created_at}"`
-    ).join('\n');
+    const csvHeader =
+      "First Name,Last Name,Email,Role,Phone,Status,Institute,Zone,Created At\n";
+    const csvData = users
+      .map(
+        (user) =>
+          `"${user.first_name || ""}","${user.last_name || ""}","${
+            user.email
+          }","${user.role}","${user.phone || ""}","${user.status}","${
+            user.institutes?.name || ""
+          }","${user.zones?.name || ""}","${user.created_at}"`
+      )
+      .join("\n");
 
     const csv = csvHeader + csvData;
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="users-export-${new Date().toISOString().split('T')[0]}.csv"`);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="users-export-${
+        new Date().toISOString().split("T")[0]
+      }.csv"`
+    );
     res.send(csv);
-
   } catch (error) {
-    console.error('Export users error:', error);
+    console.error("Export users error:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: "Internal server error",
     });
   }
 };
 
 // Validation middleware for user creation
 const validateUserCreation = [
-  body('first_name').trim().notEmpty().withMessage('First name is required'),
-  body('last_name').trim().notEmpty().withMessage('Last name is required'),
-  body('email').isEmail().withMessage('Valid email is required'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  body('role').isIn(['student', 'teacher', 'parent', 'institute_admin', 'zone_manager', 'super_admin']).withMessage('Valid role is required'),
-  body('phone').optional().matches(/^[+]?[\d\s\-()]{10,15}$/).withMessage('Valid phone number required (10-15 digits)'),
-  body('institute_id').optional().isInt().withMessage('Valid institute ID required'),
-  body('zone_id').optional().isInt().withMessage('Valid zone ID required')
+  body("first_name").trim().notEmpty().withMessage("First name is required"),
+  body("last_name").trim().notEmpty().withMessage("Last name is required"),
+  body("email").isEmail().withMessage("Valid email is required"),
+  body("password")
+    .isLength({ min: 6 })
+    .withMessage("Password must be at least 6 characters"),
+  body("role")
+    .isIn([
+      "student",
+      "teacher",
+      "parent",
+      "institute_admin",
+      "zone_manager",
+      "super_admin",
+    ])
+    .withMessage("Valid role is required"),
+  body("phone")
+    .optional()
+    .matches(/^[+]?[\d\s\-()]{10,15}$/)
+    .withMessage("Valid phone number required (10-15 digits)"),
+  body("institute_id")
+    .optional()
+    .isInt()
+    .withMessage("Valid institute ID required"),
+  body("zone_id").optional().isInt().withMessage("Valid zone ID required"),
 ];
 
 module.exports = {
@@ -848,5 +943,5 @@ module.exports = {
   bulkDeleteUsers,
   exportUsers,
   validateUserCreation,
-  importUsers
+  importUsers,
 };
