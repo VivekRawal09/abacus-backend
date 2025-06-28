@@ -3,48 +3,259 @@ const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 const XLSX = require('xlsx');
 
-
 const importUsers = async (req, res) => {
+  console.log('🔄 Import Users - Starting process...');
+  console.log('📁 File received:', !!req.file);
+  console.log('👤 User info:', req.user ? { id: req.user.id, role: req.user.role } : 'No user');
+  console.log('📋 Headers:', req.headers['content-type']);
+
+  // Check if file is uploaded
   if (!req.file) {
-    return res.status(400).json({ success: false, message: 'No file uploaded' });
+    console.log('❌ No file uploaded');
+    return res.status(400).json({ 
+      success: false, 
+      message: 'No file uploaded',
+      details: 'Please select a valid Excel file (.xlsx or .xls)'
+    });
   }
 
-  try {
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+  console.log('📊 File details:', {
+    originalname: req.file.originalname,
+    mimetype: req.file.mimetype,
+    size: req.file.size,
+    bufferLength: req.file.buffer?.length
+  });
 
-    const users = [];
-    for (const row of rows) {
-      if (!row.email || !row.password) continue;
-      const password_hash = await bcrypt.hash(row.password, 12);
-      users.push({
-        first_name: row.first_name || '',
-        last_name: row.last_name || '',
-        email: row.email,
-        password_hash,
-        role: row.role || 'student',
-        phone: row.phone || null,
-        institute_id: row.institute_id || null,
-        zone_id: row.zone_id || null,
-        status: row.status || 'active',
-        created_at: new Date().toISOString()
+  try {
+    // Validate file type
+    const validMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+      'application/octet-stream' // sometimes Excel files come as this
+    ];
+
+    if (!validMimeTypes.includes(req.file.mimetype)) {
+      console.log('❌ Invalid file type:', req.file.mimetype);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid file type. Please upload an Excel file (.xlsx or .xls)',
+        receivedType: req.file.mimetype
       });
     }
 
+    // Parse Excel file
+    console.log('📖 Reading Excel file...');
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    console.log('📃 Worksheets found:', workbook.SheetNames);
+
+    if (workbook.SheetNames.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No worksheets found in the Excel file'
+      });
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+    console.log('📊 Rows parsed:', rows.length);
+
+    if (rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No data found in the Excel file'
+      });
+    }
+
+    // Log first few rows for debugging
+    console.log('🔍 Sample data (first 2 rows):', JSON.stringify(rows.slice(0, 2), null, 2));
+
+    // Process users
+    const users = [];
+    const errors = [];
+    
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // +2 because Excel rows start at 1 and we have headers
+      
+      // Skip empty rows
+      if (!row.email && !row.first_name && !row.last_name) {
+        console.log(`⏭️ Skipping empty row ${rowNum}`);
+        continue;
+      }
+      
+      // Validate required fields
+      if (!row.email) {
+        errors.push(`Row ${rowNum}: Email is required`);
+        continue;
+      }
+      
+      if (!row.password) {
+        errors.push(`Row ${rowNum}: Password is required`);
+        continue;
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(row.email)) {
+        errors.push(`Row ${rowNum}: Invalid email format - ${row.email}`);
+        continue;
+      }
+
+      try {
+        console.log(`🔐 Hashing password for row ${rowNum}...`);
+        const password_hash = await bcrypt.hash(row.password.toString(), 12);
+        
+        const user = {
+          first_name: row.first_name || '',
+          last_name: row.last_name || '',
+          email: row.email.toLowerCase().trim(),
+          password_hash,
+          role: row.role || 'student',
+          phone: row.phone || null,
+          institute_id: row.institute_id ? parseInt(row.institute_id) : null,
+          zone_id: row.zone_id ? parseInt(row.zone_id) : null,
+          status: row.status || 'active',
+          date_of_birth: row.date_of_birth || null,
+          gender: row.gender || null,
+          address: row.address || null,
+          created_at: new Date().toISOString()
+        };
+
+        // Validate role
+        const validRoles = ['student', 'teacher', 'parent', 'institute_admin', 'zone_manager', 'super_admin'];
+        if (!validRoles.includes(user.role)) {
+          errors.push(`Row ${rowNum}: Invalid role "${user.role}". Valid roles: ${validRoles.join(', ')}`);
+          continue;
+        }
+
+        users.push(user);
+        console.log(`✅ User processed for row ${rowNum}: ${user.email}`);
+        
+      } catch (hashError) {
+        console.error(`❌ Error hashing password for row ${rowNum}:`, hashError);
+        errors.push(`Row ${rowNum}: Failed to process password`);
+      }
+    }
+
+    console.log(`📊 Processing complete: ${users.length} valid users, ${errors.length} errors`);
+
     if (users.length === 0) {
-      return res.status(400).json({ success: false, message: 'No valid users found in file.' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No valid users found in file',
+        errors: errors.slice(0, 10), // Limit to first 10 errors
+        totalErrors: errors.length
+      });
     }
 
-    const { data, error } = await supabase.from('users').insert(users);
+    // Check for duplicate emails in the batch
+    const emailCounts = {};
+    const duplicateEmails = [];
+    
+    users.forEach((user, index) => {
+      if (emailCounts[user.email]) {
+        duplicateEmails.push(`Duplicate email in batch: ${user.email} (rows ${emailCounts[user.email]} and ${index + 2})`);
+      } else {
+        emailCounts[user.email] = index + 2;
+      }
+    });
 
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
+    if (duplicateEmails.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Duplicate emails found in the file',
+        errors: duplicateEmails
+      });
     }
 
-    res.json({ success: true, message: `${users.length} users imported`, data });
+    // Check for existing emails in database
+    console.log('🔍 Checking for existing emails in database...');
+    const emailsToCheck = users.map(u => u.email);
+    const { data: existingUsers, error: checkError } = await supabase
+      .from('users')
+      .select('email')
+      .in('email', emailsToCheck);
+
+    if (checkError) {
+      console.error('❌ Database check error:', checkError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to check for existing users',
+        error: checkError.message
+      });
+    }
+
+    if (existingUsers && existingUsers.length > 0) {
+      const existingEmails = existingUsers.map(u => u.email);
+      return res.status(400).json({
+        success: false,
+        message: 'Some email addresses already exist in the system',
+        existingEmails: existingEmails
+      });
+    }
+
+    // Insert users in batches to avoid hitting limits
+    console.log('💾 Inserting users into database...');
+    const batchSize = 100; // Supabase has limits on bulk inserts
+    const insertedUsers = [];
+    
+    for (let i = 0; i < users.length; i += batchSize) {
+      const batch = users.slice(i, i + batchSize);
+      console.log(`📦 Inserting batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(users.length/batchSize)} (${batch.length} users)...`);
+      
+      const { data, error } = await supabase
+        .from('users')
+        .insert(batch)
+        .select('id, email, first_name, last_name, role');
+
+      if (error) {
+        console.error('❌ Database insert error:', error);
+        return res.status(500).json({ 
+          success: false, 
+          message: `Database error during batch insert: ${error.message}`,
+          details: error.details || error.hint,
+          batchNumber: Math.floor(i/batchSize) + 1
+        });
+      }
+
+      if (data) {
+        insertedUsers.push(...data);
+      }
+    }
+
+    console.log('✅ Import completed successfully');
+    console.log(`📊 Final stats: ${insertedUsers.length} users imported, ${errors.length} errors`);
+
+    const response = {
+      success: true,
+      message: `Successfully imported ${insertedUsers.length} users`,
+      stats: {
+        totalProcessed: rows.length,
+        successfulImports: insertedUsers.length,
+        errors: errors.length,
+        skipped: rows.length - users.length - errors.length
+      },
+      data: insertedUsers
+    };
+
+    // Include errors if any (for informational purposes)
+    if (errors.length > 0) {
+      response.warnings = errors.slice(0, 10); // Limit to first 10 errors
+      response.totalWarnings = errors.length;
+    }
+
+    res.json(response);
+
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error('❌ Import process error:', err);
+    console.error('Stack trace:', err.stack);
+    
+    res.status(500).json({ 
+      success: false, 
+      message: 'Internal server error during import process',
+      error: err.message,
+      details: 'Please check the file format and try again'
+    });
   }
 };
 
@@ -637,5 +848,5 @@ module.exports = {
   bulkDeleteUsers,
   exportUsers,
   validateUserCreation,
-  importUsers // <-- add this line
+  importUsers
 };
