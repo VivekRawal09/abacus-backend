@@ -2,6 +2,54 @@ const { supabase } = require('../config/database');
 const bcrypt = require('bcryptjs');
 const { body, validationResult } = require('express-validator');
 
+const XLSX = require('xlsx');
+const fs = require('fs');
+const path = require('path');
+const importUsers = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'No file uploaded' });
+  }
+
+  try {
+    // Read the uploaded file (works for .xlsx and .csv)
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    // Prepare users array for insertion
+    const users = [];
+    for (const row of rows) {
+      if (!row.email || !row.password) continue; // Basic validation
+      const password_hash = await bcrypt.hash(row.password, 12);
+      users.push({
+        first_name: row.first_name || '',
+        last_name: row.last_name || '',
+        email: row.email,
+        password_hash,
+        role: row.role || 'student',
+        phone: row.phone || null,
+        institute_id: row.institute_id || null,
+        zone_id: row.zone_id || null,
+        status: row.status || 'active',
+        created_at: new Date().toISOString()
+      });
+    }
+
+    // Insert users into Supabase
+    const { data, error } = await supabase.from('users').insert(users);
+    fs.unlinkSync(req.file.path); // Clean up
+
+    if (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
+
+    res.json({ success: true, message: `${users.length} users imported`, data });
+  } catch (err) {
+    fs.unlinkSync(req.file.path);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // GET /api/users - Get all users with pagination (EXISTING - ENHANCED)
 const getAllUsers = async (req, res) => {
   try {

@@ -1,5 +1,8 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
+const { importUsers } = require('../controllers/users');
 const { 
   getAllUsers,
   getUserStats,
@@ -70,6 +73,13 @@ router.delete('/:id',
 router.delete('/bulk', 
   authorizeRoles('super_admin', 'zone_manager'),
   bulkDeleteUsers
+);
+
+router.post(
+  '/import',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'), // Only these roles can import
+  upload.single('file'),
+  importUsers
 );
 
 module.exports = router;
