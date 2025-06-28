@@ -7,33 +7,62 @@ const XLSX = require("xlsx");
  * Convert Excel date serial number to proper date string
  * Excel stores dates as serial numbers (days since 1900-01-01)
  */
+/**
+ * Convert Excel date serial number OR text date to proper date string
+ */
 const convertExcelDate = (excelDate) => {
   if (!excelDate) return null;
 
-  // If it's already a proper date string, return as is
-  if (typeof excelDate === "string" && excelDate.includes("-")) {
+  // If it's already a proper date string (YYYY-MM-DD), return as is
+  if (typeof excelDate === "string" && excelDate.includes("-") && excelDate.length === 10) {
     return excelDate;
   }
 
-  // If it's an Excel serial number
-  if (
-    typeof excelDate === "number" ||
-    (typeof excelDate === "string" && !isNaN(excelDate))
-  ) {
-    const serialNumber =
-      typeof excelDate === "string" ? parseFloat(excelDate) : excelDate;
+  // Handle text dates like "3/15/10", "12/8/85"
+  if (typeof excelDate === "string" && excelDate.includes("/")) {
+    try {
+      const parts = excelDate.split("/");
+      if (parts.length === 3) {
+        let [month, day, year] = parts;
+        
+        // Handle 2-digit years
+        if (year.length === 2) {
+          const currentYear = new Date().getFullYear();
+          const currentYearShort = currentYear % 100;
+          
+          // If year is greater than current year's last 2 digits, assume it's from 1900s
+          // Otherwise assume it's from 2000s
+          if (parseInt(year) > currentYearShort) {
+            year = "19" + year;
+          } else {
+            year = "20" + year;
+          }
+        }
+        
+        // Pad month and day with leading zeros
+        month = month.padStart(2, '0');
+        day = day.padStart(2, '0');
+        
+        // Return in YYYY-MM-DD format
+        return `${year}-${month}-${day}`;
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not parse date "${excelDate}":`, error);
+      return null;
+    }
+  }
 
-    // Excel epoch starts at 1900-01-01, but has a leap year bug
-    const excelEpoch = new Date(1899, 11, 30); // December 30, 1899
-    const date = new Date(
-      excelEpoch.getTime() + serialNumber * 24 * 60 * 60 * 1000
-    );
-
-    // Format as YYYY-MM-DD
+  // Handle Excel serial numbers
+  if (typeof excelDate === "number" || (typeof excelDate === "string" && !isNaN(excelDate))) {
+    const serialNumber = typeof excelDate === "string" ? parseFloat(excelDate) : excelDate;
+    
+    const excelEpoch = new Date(1899, 11, 30);
+    const date = new Date(excelEpoch.getTime() + (serialNumber * 24 * 60 * 60 * 1000));
+    
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
-
+    
     return `${year}-${month}-${day}`;
   }
 
