@@ -14,7 +14,11 @@ const convertExcelDate = (excelDate) => {
   if (!excelDate) return null;
 
   // If it's already a proper date string (YYYY-MM-DD), return as is
-  if (typeof excelDate === "string" && excelDate.includes("-") && excelDate.length === 10) {
+  if (
+    typeof excelDate === "string" &&
+    excelDate.includes("-") &&
+    excelDate.length === 10
+  ) {
     return excelDate;
   }
 
@@ -24,12 +28,12 @@ const convertExcelDate = (excelDate) => {
       const parts = excelDate.split("/");
       if (parts.length === 3) {
         let [month, day, year] = parts;
-        
+
         // Handle 2-digit years
         if (year.length === 2) {
           const currentYear = new Date().getFullYear();
           const currentYearShort = currentYear % 100;
-          
+
           // If year is greater than current year's last 2 digits, assume it's from 1900s
           // Otherwise assume it's from 2000s
           if (parseInt(year) > currentYearShort) {
@@ -38,11 +42,11 @@ const convertExcelDate = (excelDate) => {
             year = "20" + year;
           }
         }
-        
+
         // Pad month and day with leading zeros
-        month = month.padStart(2, '0');
-        day = day.padStart(2, '0');
-        
+        month = month.padStart(2, "0");
+        day = day.padStart(2, "0");
+
         // Return in YYYY-MM-DD format
         return `${year}-${month}-${day}`;
       }
@@ -53,16 +57,22 @@ const convertExcelDate = (excelDate) => {
   }
 
   // Handle Excel serial numbers
-  if (typeof excelDate === "number" || (typeof excelDate === "string" && !isNaN(excelDate))) {
-    const serialNumber = typeof excelDate === "string" ? parseFloat(excelDate) : excelDate;
-    
+  if (
+    typeof excelDate === "number" ||
+    (typeof excelDate === "string" && !isNaN(excelDate))
+  ) {
+    const serialNumber =
+      typeof excelDate === "string" ? parseFloat(excelDate) : excelDate;
+
     const excelEpoch = new Date(1899, 11, 30);
-    const date = new Date(excelEpoch.getTime() + (serialNumber * 24 * 60 * 60 * 1000));
-    
+    const date = new Date(
+      excelEpoch.getTime() + serialNumber * 24 * 60 * 60 * 1000
+    );
+
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
-    
+
     return `${year}-${month}-${day}`;
   }
 
@@ -143,7 +153,9 @@ const importUsers = async (req, res) => {
     );
 
     // Debug: Show all roles found in file
-    console.log('🔍 All roles found in file:', [...new Set(rows.map(row => row.role).filter(Boolean))]);
+    console.log("🔍 All roles found in file:", [
+      ...new Set(rows.map((row) => row.role).filter(Boolean)),
+    ]);
 
     // Process users
     const users = [];
@@ -181,56 +193,55 @@ const importUsers = async (req, res) => {
         console.log(`🔐 Hashing password for row ${rowNum}...`);
         const password_hash = await bcrypt.hash(row.password.toString(), 12);
 
-        // IMPROVED ROLE VALIDATION
-        // Normalize and validate role first
+        // FIXED: Map roles to match database constraint
         let userRole = (row.role || "student").toLowerCase().trim();
 
-        // Handle common role variations
+        // Handle role mapping to match database constraint
         const roleMapping = {
-          'student': 'student',
-          'teacher': 'teacher', 
-          'parent': 'parent',
-          'institute_admin': 'institute_admin',
-          'instituteadmin': 'institute_admin',
-          'institute admin': 'institute_admin',
-          'admin': 'institute_admin',
-          'zone_manager': 'zone_manager',
-          'zonemanager': 'zone_manager',
-          'zone manager': 'zone_manager',
-          'manager': 'zone_manager',
-          'super_admin': 'super_admin',
-          'superadmin': 'super_admin',
-          'super admin': 'super_admin',
-          'super': 'super_admin'
+          student: "student",
+          teacher: "institute_admin", // Map teacher → institute_admin
+          parent: "parent",
+          institute_admin: "institute_admin",
+          instituteadmin: "institute_admin",
+          "institute admin": "institute_admin",
+          admin: "institute_admin",
+          zone_manager: "institute_admin", // Map zone_manager → institute_admin
+          zonemanager: "institute_admin",
+          "zone manager": "institute_admin",
+          manager: "institute_admin",
+          super_admin: "super_admin",
+          superadmin: "super_admin",
+          "super admin": "super_admin",
+          super: "super_admin",
         };
 
-        // Map the role or use the original if valid
-        userRole = roleMapping[userRole] || userRole;
+        // Map the role or default to student
+        userRole = roleMapping[userRole] || "student";
 
-        // Validate role
+        // Final validation - only allow database-approved roles
         const validRoles = [
           "student",
-          "teacher", 
           "parent",
           "institute_admin",
-          "zone_manager",
           "super_admin",
         ];
 
         if (!validRoles.includes(userRole)) {
-          errors.push(
-            `Row ${rowNum}: Invalid role "${row.role || 'student'}". Valid roles: ${validRoles.join(", ")}`
+          console.warn(
+            `⚠️ Invalid role "${row.role}" in row ${rowNum}, defaulting to "student"`
           );
-          continue;
+          userRole = "student";
         }
+
+        console.log(`🎭 Row ${rowNum}: "${row.role}" → "${userRole}"`);
 
         const user = {
           first_name: row.first_name || "",
           last_name: row.last_name || "",
           email: row.email.toLowerCase().trim(),
           password_hash,
-          role: userRole,  // Use the validated and normalized role
-          phone: row.phone || null,
+          role: userRole, // Use the mapped role
+          phone: row.phone ? Math.abs(row.phone).toString() : null,
           institute_id: row.institute_id ? parseInt(row.institute_id) : null,
           zone_id: row.zone_id ? parseInt(row.zone_id) : null,
           status: row.status || "active",
@@ -241,8 +252,9 @@ const importUsers = async (req, res) => {
         };
 
         users.push(user);
-        console.log(`✅ User processed for row ${rowNum}: ${user.email} (role: ${user.role})`);
-        
+        console.log(
+          `✅ User processed for row ${rowNum}: ${user.email} (role: ${user.role})`
+        );
       } catch (hashError) {
         console.error(
           `❌ Error hashing password for row ${rowNum}:`,
