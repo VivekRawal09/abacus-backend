@@ -26,6 +26,7 @@ app.use('/api/videos', require('./routes/videos'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/institutes', require('./routes/institutes'));
 app.use('/api/analytics', require('./routes/analytics'));
+app.use('/api/zones', require('./routes/zones'));
 
 // 404 handler
 app.use('*', (req, res) => {
