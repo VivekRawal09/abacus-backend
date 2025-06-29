@@ -181,7 +181,7 @@ class YouTubeService {
         view_count: videoDetails.viewCount,
         like_count: videoDetails.likeCount,
         channel_title: videoDetails.channelTitle,
-        channel_id: videoDetails.channelId,
+        channel_id: videoDetails.channelId || null,
         published_date: videoDetails.publishedAt,
         tags: videoDetails.tags,
         category: "general", // Default category

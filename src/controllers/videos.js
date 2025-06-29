@@ -103,30 +103,36 @@ const getVideoById = async (req, res) => {
 const addVideoFromYouTube = async (req, res) => {
   try {
     // ENHANCED: Handle multiple possible field names from frontend
-    const { 
-      youtubeVideoId, 
+    const {
+      youtubeVideoId,
       youtube_video_id,
       videoId,
-      category, 
-      difficulty, 
+      category,
+      difficulty,
       difficulty_level,
-      courseOrder, 
+      courseOrder,
       course_order,
-      tags 
+      tags,
     } = req.body;
 
     // Extract the actual video ID from multiple possible sources
-    const actualVideoId = youtubeVideoId || youtube_video_id || videoId;
+    let actualVideoId = youtubeVideoId || youtube_video_id || videoId;
+    if (actualVideoId && actualVideoId.includes("youtube.com/watch?v=")) {
+      const urlMatch = actualVideoId.match(/[?&]v=([^&]+)/);
+      actualVideoId = urlMatch ? urlMatch[1] : actualVideoId;
+    } else if (actualVideoId && actualVideoId.includes("youtu.be/")) {
+      actualVideoId = actualVideoId.split("youtu.be/")[1].split(/[?&]/)[0];
+    }
     const actualDifficulty = difficulty || difficulty_level;
     const actualCourseOrder = courseOrder || course_order;
 
-    console.log('📹 Video creation request:', {
+    console.log("📹 Video creation request:", {
       actualVideoId,
       category,
       actualDifficulty,
       actualCourseOrder,
       tags,
-      originalBody: req.body
+      originalBody: req.body,
     });
 
     if (!actualVideoId) {
