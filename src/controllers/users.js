@@ -398,6 +398,9 @@ const importUsers = async (req, res) => {
 };
 
 // GET /api/users - Get all users with pagination (EXISTING - ENHANCED)
+// FIND THIS FUNCTION IN YOUR src/controllers/users.js AND REPLACE IT
+
+// GET /api/users - Get all users with pagination (FIXED PAGINATION)
 const getAllUsers = async (req, res) => {
   try {
     const {
@@ -417,7 +420,7 @@ const getAllUsers = async (req, res) => {
         institutes(name),
         zones(name)
       `,
-      { count: "exact" }
+      { count: "exact" } // IMPORTANT: This gets the total count
     );
 
     // Apply filters
@@ -446,7 +449,7 @@ const getAllUsers = async (req, res) => {
     const {
       data: users,
       error,
-      count,
+      count, // This is the total count from { count: "exact" }
     } = await query.range(from, to).order("created_at", { ascending: false });
 
     if (error) throw error;
@@ -470,14 +473,15 @@ const getAllUsers = async (req, res) => {
       zone_id: user.zone_id,
     }));
 
+    // FIX: Return proper format with pagination (FIXED FIELD NAMES)
     res.json({
       success: true,
       data: formattedUsers,
       pagination: {
-        currentPage: parseInt(page),
+        currentPage: parseInt(page), // FIXED: currentPage instead of current_page
         totalPages: Math.ceil(count / limit),
-        totalItems: count,
-        pageSize: parseInt(limit),
+        totalItems: count, // FIXED: totalItems instead of total_items
+        pageSize: parseInt(limit), // FIXED: pageSize instead of items_per_page
       },
     });
   } catch (error) {
