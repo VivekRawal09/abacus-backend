@@ -102,10 +102,34 @@ const getVideoById = async (req, res) => {
 
 const addVideoFromYouTube = async (req, res) => {
   try {
-    const { youtubeVideoId, category, difficulty, courseOrder, tags } =
-      req.body;
+    // ENHANCED: Handle multiple possible field names from frontend
+    const { 
+      youtubeVideoId, 
+      youtube_video_id,
+      videoId,
+      category, 
+      difficulty, 
+      difficulty_level,
+      courseOrder, 
+      course_order,
+      tags 
+    } = req.body;
 
-    if (!youtubeVideoId) {
+    // Extract the actual video ID from multiple possible sources
+    const actualVideoId = youtubeVideoId || youtube_video_id || videoId;
+    const actualDifficulty = difficulty || difficulty_level;
+    const actualCourseOrder = courseOrder || course_order;
+
+    console.log('📹 Video creation request:', {
+      actualVideoId,
+      category,
+      actualDifficulty,
+      actualCourseOrder,
+      tags,
+      originalBody: req.body
+    });
+
+    if (!actualVideoId) {
       return res.status(400).json({
         success: false,
         message: "YouTube video ID is required",
@@ -113,20 +137,20 @@ const addVideoFromYouTube = async (req, res) => {
     }
 
     // Sync video from YouTube to database
-    const video = await YouTubeService.syncVideoToDatabase(youtubeVideoId);
+    const video = await YouTubeService.syncVideoToDatabase(actualVideoId);
 
     // Update additional fields if provided
-    if (category || difficulty || courseOrder || tags) {
+    if (category || actualDifficulty || actualCourseOrder || tags) {
       const updateData = {};
       if (category) updateData.category = category;
-      if (difficulty) updateData.difficulty_level = difficulty;
-      if (courseOrder) updateData.course_order = courseOrder;
+      if (actualDifficulty) updateData.difficulty_level = actualDifficulty;
+      if (actualCourseOrder) updateData.course_order = actualCourseOrder;
       if (tags) updateData.tags = tags;
 
       const { data: updatedVideo, error } = await supabase
         .from("video_content")
         .update(updateData)
-        .eq("youtube_video_id", youtubeVideoId)
+        .eq("youtube_video_id", actualVideoId)
         .select()
         .single();
 
