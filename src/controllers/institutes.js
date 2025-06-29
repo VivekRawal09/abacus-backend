@@ -1,9 +1,10 @@
 const { supabase } = require('../config/database');
 
+// GET /api/institutes - Get all institutes with pagination (FIXED PAGINATION)
 const getAllInstitutes = async (req, res) => {
   try {
-    const { page = 1, limit = 20, search } = req.query;
-    
+    const { page = 1, limit = 20, search, zone_id, status } = req.query;
+
     let query = supabase
       .from('institutes')
       .select(`
@@ -12,30 +13,40 @@ const getAllInstitutes = async (req, res) => {
         zones(name, code)
       `, { count: 'exact' });
 
+    // Apply filters
     if (search) {
       query = query.or(`name.ilike.%${search}%,code.ilike.%${search}%,city.ilike.%${search}%`);
     }
 
+    if (zone_id) {
+      query = query.eq('zone_id', zone_id);
+    }
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    // Apply pagination
     const from = (page - 1) * limit;
     const to = from + limit - 1;
-    
+
     const { data: institutes, error, count } = await query
       .range(from, to)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
 
+    // FIX: Match frontend pagination field names (camelCase)
     res.json({
       success: true,
       data: institutes,
       pagination: {
-        current_page: parseInt(page),
-        total_pages: Math.ceil(count / limit),
-        total_items: count,
-        items_per_page: parseInt(limit)
+        currentPage: parseInt(page),        // FIXED: currentPage instead of current_page
+        totalPages: Math.ceil(count / limit),
+        totalItems: count,                  // FIXED: totalItems instead of total_items
+        pageSize: parseInt(limit)           // FIXED: pageSize instead of items_per_page
       }
     });
-
   } catch (error) {
     console.error('Get institutes error:', error);
     res.status(500).json({
@@ -45,6 +56,7 @@ const getAllInstitutes = async (req, res) => {
   }
 };
 
+// GET /api/institutes/:id - Get single institute by ID
 const getInstituteById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -70,7 +82,6 @@ const getInstituteById = async (req, res) => {
       success: true,
       data: institute
     });
-
   } catch (error) {
     console.error('Get institute error:', error);
     res.status(500).json({
@@ -80,6 +91,312 @@ const getInstituteById = async (req, res) => {
   }
 };
 
+// POST /api/institutes - Create new institute (NEW - FIX FOR 404 ERROR)
+const createInstitute = async (req, res) => {
+  try {
+    const {
+      name,
+      code,
+      address,
+      city,
+      state,
+      pincode,
+      phone,
+      email,
+      zone_id,
+      established_date
+    } = req.body;
+
+    // Validate required fields
+    if (!name || !city || !state) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, city, and state are required'
+      });
+    }
+
+    // Check if institute code already exists (if provided)
+    if (code) {
+      const { data: existingInstitute } = await supabase
+        .from('institutes')
+        .select('code')
+        .eq('code', code)
+        .single();
+
+      if (existingInstitute) {
+        return res.status(400).json({
+          success: false,
+          message: 'Institute code already exists'
+        });
+      }
+    }
+
+    // Create institute
+    const { data: newInstitute, error } = await supabase
+      .from('institutes')
+      .insert({
+        name,
+        code,
+        address,
+        city,
+        state,
+        pincode,
+        phone,
+        email,
+        zone_id: zone_id || null,
+        established_date: established_date || null,
+        status: 'active',
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Create institute error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create institute'
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Institute created successfully',
+      data: newInstitute
+    });
+
+  } catch (error) {
+    console.error('Create institute error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// PUT /api/institutes/:id - Update institute (NEW)
+const updateInstitute = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      code,
+      address,
+      city,
+      state,
+      pincode,
+      phone,
+      email,
+      zone_id,
+      established_date,
+      status
+    } = req.body;
+
+    // Check if institute exists
+    const { data: existingInstitute, error: fetchError } = await supabase
+      .from('institutes')
+      .select('id, code')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingInstitute) {
+      return res.status(404).json({
+        success: false,
+        message: 'Institute not found'
+      });
+    }
+
+    // If code is being changed, check for duplicates
+    if (code && code !== existingInstitute.code) {
+      const { data: codeCheck } = await supabase
+        .from('institutes')
+        .select('code')
+        .eq('code', code)
+        .neq('id', id)
+        .single();
+
+      if (codeCheck) {
+        return res.status(400).json({
+          success: false,
+          message: 'Institute code already exists'
+        });
+      }
+    }
+
+    // Prepare update data
+    const updateData = {
+      updated_at: new Date().toISOString()
+    };
+
+    if (name !== undefined) updateData.name = name;
+    if (code !== undefined) updateData.code = code;
+    if (address !== undefined) updateData.address = address;
+    if (city !== undefined) updateData.city = city;
+    if (state !== undefined) updateData.state = state;
+    if (pincode !== undefined) updateData.pincode = pincode;
+    if (phone !== undefined) updateData.phone = phone;
+    if (email !== undefined) updateData.email = email;
+    if (zone_id !== undefined) updateData.zone_id = zone_id;
+    if (established_date !== undefined) updateData.established_date = established_date;
+    if (status !== undefined) updateData.status = status;
+
+    // Update institute
+    const { data: updatedInstitute, error } = await supabase
+      .from('institutes')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Update institute error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update institute'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Institute updated successfully',
+      data: updatedInstitute
+    });
+
+  } catch (error) {
+    console.error('Update institute error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// DELETE /api/institutes/:id - Delete institute (NEW)
+const deleteInstitute = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if institute exists
+    const { data: existingInstitute, error: fetchError } = await supabase
+      .from('institutes')
+      .select('id, name')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingInstitute) {
+      return res.status(404).json({
+        success: false,
+        message: 'Institute not found'
+      });
+    }
+
+    // Soft delete - set status to inactive
+    const { error } = await supabase
+      .from('institutes')
+      .update({ 
+        status: 'inactive',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Delete institute error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete institute'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Institute deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete institute error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// PUT /api/institutes/:id/status - Toggle institute status (NEW)
+const updateInstituteStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_active } = req.body;
+
+    const { data: updatedInstitute, error } = await supabase
+      .from('institutes')
+      .update({ 
+        status: is_active ? 'active' : 'inactive',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(404).json({
+        success: false,
+        message: 'Institute not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Institute ${is_active ? 'activated' : 'deactivated'} successfully`,
+      data: updatedInstitute
+    });
+
+  } catch (error) {
+    console.error('Update institute status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// DELETE /api/institutes/bulk - Bulk delete institutes (NEW)
+const bulkDeleteInstitutes = async (req, res) => {
+  try {
+    const { instituteIds } = req.body;
+
+    if (!instituteIds || !Array.isArray(instituteIds) || instituteIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Institute IDs array is required'
+      });
+    }
+
+    // Soft delete - set status to inactive
+    const { error } = await supabase
+      .from('institutes')
+      .update({ 
+        status: 'inactive',
+        updated_at: new Date().toISOString()
+      })
+      .in('id', instituteIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${instituteIds.length} institutes deleted successfully`
+    });
+
+  } catch (error) {
+    console.error('Bulk delete institutes error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+};
+
+// GET /api/institutes/stats - Get institute statistics (EXISTING)
 const getInstituteStats = async (req, res) => {
   try {
     // Get total institutes
@@ -101,18 +418,25 @@ const getInstituteStats = async (req, res) => {
       return acc;
     }, {});
 
-    // Get student count per institute
-    const { data: studentCounts, error: studentError } = await supabase
-      .from('students')
-      .select('institute_id, institutes(name)');
+    // Get student count per institute (handle missing students table gracefully)
+    let studentsByInstitute = {};
+    try {
+      const { data: studentCounts, error: studentError } = await supabase
+        .from('users')  // Use users table instead of students
+        .select('institute_id, institutes(name)')
+        .eq('role', 'student');
 
-    if (studentError) throw studentError;
-
-    const studentsByInstitute = studentCounts.reduce((acc, student) => {
-      const instituteName = student.institutes?.name || 'Unknown';
-      acc[instituteName] = (acc[instituteName] || 0) + 1;
-      return acc;
-    }, {});
+      if (!studentError && studentCounts) {
+        studentsByInstitute = studentCounts.reduce((acc, student) => {
+          const instituteName = student.institutes?.name || 'Unknown';
+          acc[instituteName] = (acc[instituteName] || 0) + 1;
+          return acc;
+        }, {});
+      }
+    } catch (studentError) {
+      console.warn('Students data not available:', studentError.message);
+      // Continue without student data
+    }
 
     res.json({
       success: true,
@@ -122,7 +446,6 @@ const getInstituteStats = async (req, res) => {
         students_by_institute: studentsByInstitute
       }
     });
-
   } catch (error) {
     console.error('Get institute stats error:', error);
     res.status(500).json({
@@ -135,5 +458,10 @@ const getInstituteStats = async (req, res) => {
 module.exports = {
   getAllInstitutes,
   getInstituteById,
-  getInstituteStats
+  getInstituteStats,
+  createInstitute,         // NEW
+  updateInstitute,         // NEW  
+  deleteInstitute,         // NEW
+  updateInstituteStatus,   // NEW
+  bulkDeleteInstitutes     // NEW
 };
