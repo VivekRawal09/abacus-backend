@@ -92,8 +92,13 @@ const getInstituteById = async (req, res) => {
 };
 
 // POST /api/institutes - Create new institute (NEW - FIX FOR 404 ERROR)
+// TEMPORARY DEBUG VERSION - Add this to your createInstitute function
+
 const createInstitute = async (req, res) => {
   try {
+    console.log('🔍 CREATE INSTITUTE DEBUG:');
+    console.log('📋 Request body:', JSON.stringify(req.body, null, 2));
+    
     const {
       name,
       code,
@@ -106,6 +111,16 @@ const createInstitute = async (req, res) => {
       zone_id,
       established_date
     } = req.body;
+
+    // LOG FIELD LENGTHS TO DEBUG
+    console.log('📏 Field lengths:');
+    console.log('- name:', name?.length || 0, '|', name);
+    console.log('- code:', code?.length || 0, '|', code);
+    console.log('- address:', address?.length || 0, '|', address);
+    console.log('- city:', city?.length || 0, '|', city);
+    console.log('- state:', state?.length || 0, '|', state);
+    console.log('- phone:', phone?.length || 0, '|', phone);
+    console.log('- email:', email?.length || 0, '|', email);
 
     // Validate required fields
     if (!name || !city || !state) {
@@ -131,33 +146,49 @@ const createInstitute = async (req, res) => {
       }
     }
 
+    // Create institute data
+    const instituteData = {
+      name,
+      code,
+      address,
+      city,
+      state,
+      pincode,
+      phone,
+      email,
+      zone_id: zone_id || null,
+      established_date: established_date || null,
+      status: 'active',
+      created_at: new Date().toISOString()
+    };
+
+    console.log('💾 About to insert:', JSON.stringify(instituteData, null, 2));
+
     // Create institute
     const { data: newInstitute, error } = await supabase
       .from('institutes')
-      .insert({
-        name,
-        code,
-        address,
-        city,
-        state,
-        pincode,
-        phone,
-        email,
-        zone_id: zone_id || null,
-        established_date: established_date || null,
-        status: 'active',
-        created_at: new Date().toISOString()
-      })
+      .insert(instituteData)
       .select()
       .single();
 
     if (error) {
-      console.error('Create institute error:', error);
+      console.error('❌ Database insert error:', error);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error details:', error.details);
+      console.error('❌ Error hint:', error.hint);
+      
       return res.status(500).json({
         success: false,
-        message: 'Failed to create institute'
+        message: 'Failed to create institute',
+        error: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
       });
     }
+
+    console.log('✅ Institute created successfully:', newInstitute);
 
     res.status(201).json({
       success: true,
@@ -166,10 +197,11 @@ const createInstitute = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Create institute error:', error);
+    console.error('❌ Create institute error:', error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error'
+      message: 'Internal server error',
+      error: error.message
     });
   }
 };
