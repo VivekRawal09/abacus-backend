@@ -1,11 +1,11 @@
-const { google } = require('googleapis');
-const { supabase } = require('../config/database');
+const { google } = require("googleapis");
+const { supabase } = require("../config/database");
 
 class YouTubeService {
   constructor() {
     this.youtube = google.youtube({
-      version: 'v3',
-      auth: process.env.YOUTUBE_API_KEY
+      version: "v3",
+      auth: process.env.YOUTUBE_API_KEY,
     });
     this.quotaUsed = 0;
     this.quotaLimit = 10000; // Daily quota limit
@@ -15,130 +15,142 @@ class YouTubeService {
   async searchVideos(query, maxResults = 10) {
     try {
       if (!process.env.YOUTUBE_API_KEY) {
-        // FALLBACK: Return mock data when API key is not available
-        console.warn('⚠️ YouTube API key not configured - returning mock data');
-        return this.getMockSearchResults(query, maxResults);
+        throw new Error("YouTube API key not configured");
       }
 
       // Validate query
       if (!query || query.trim().length === 0) {
-        throw new Error('Search query cannot be empty');
+        throw new Error("Search query cannot be empty");
       }
 
       console.log(`🔍 Searching YouTube for: "${query}" (max: ${maxResults})`);
 
       const response = await this.youtube.search.list({
-        part: 'snippet',
+        part: "snippet",
         q: decodeURIComponent(query), // FIXED: Properly decode URL-encoded query
-        type: 'video',
+        type: "video",
         maxResults: parseInt(maxResults),
-        order: 'relevance',
-        videoDefinition: 'any',
-        videoEmbeddable: 'true',
-        safeSearch: 'strict'
+        order: "relevance",
+        videoDefinition: "any",
+        videoEmbeddable: "true",
+        safeSearch: "strict",
       });
 
       this.quotaUsed += 100; // Search costs 100 quota units
 
-      const videos = response.data.items.map(item => ({
+      const videos = response.data.items.map((item) => ({
         videoId: item.id.videoId,
         title: item.snippet.title,
         description: item.snippet.description,
-        thumbnail: item.snippet.thumbnails?.maxresdefault?.url || 
-                  item.snippet.thumbnails?.high?.url ||
-                  item.snippet.thumbnails?.medium?.url,
+        thumbnail:
+          item.snippet.thumbnails?.maxresdefault?.url ||
+          item.snippet.thumbnails?.high?.url ||
+          item.snippet.thumbnails?.medium?.url,
         publishedAt: item.snippet.publishedAt,
         channelTitle: item.snippet.channelTitle,
         channelId: item.snippet.channelId,
         embedUrl: this.getEmbedUrl(item.id.videoId),
-        thumbnailUrl: this.getThumbnailUrl(item.id.videoId)
+        thumbnailUrl: this.getThumbnailUrl(item.id.videoId),
       }));
 
       console.log(`✅ Found ${videos.length} videos for query: "${query}"`);
       return videos;
-
     } catch (error) {
-      console.error('YouTube search error:', error);
-      
+      console.error("YouTube search error:", error);
+
       // ENHANCED: Better error messages
       if (error.code === 403) {
-        throw new Error('YouTube API quota exceeded or invalid API key');
+        throw new Error("YouTube API quota exceeded or invalid API key");
       } else if (error.code === 400) {
-        throw new Error('Invalid search parameters');
+        throw new Error("Invalid search parameters");
       } else {
         throw new Error(`YouTube search failed: ${error.message}`);
       }
     }
   }
 
-  // ADDED: Mock search results for development/testing
-  getMockSearchResults(query, maxResults) {
-    const mockVideos = [
-      {
-        videoId: 'FTVXUG_PngE',
-        title: `Abacus Tutorial: ${query} - Basic Function`,
-        description: `Mock result for search: ${query}. This is a demonstration video.`,
-        thumbnail: 'https://i.ytimg.com/vi/FTVXUG_PngE/hqdefault.jpg',
-        publishedAt: new Date().toISOString(),
-        channelTitle: 'ABACUS Learning Channel',
-        channelId: 'UC_mock_channel',
-        embedUrl: this.getEmbedUrl('FTVXUG_PngE'),
-        thumbnailUrl: this.getThumbnailUrl('FTVXUG_PngE')
-      },
-      {
-        videoId: 'dQw4w9WgXcQ',
-        title: `Advanced ${query} Techniques`,
-        description: `Mock advanced tutorial for: ${query}`,
-        thumbnail: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-        publishedAt: new Date().toISOString(),
-        channelTitle: 'Education Plus',
-        channelId: 'UC_mock_channel_2',
-        embedUrl: this.getEmbedUrl('dQw4w9WgXcQ'),
-        thumbnailUrl: this.getThumbnailUrl('dQw4w9WgXcQ')
-      }
-    ];
+  // // ADDED: Mock search results for development/testing
+  // getMockSearchResults(query, maxResults) {
+  //   const mockVideos = [
+  //     {
+  //       videoId: "FTVXUG_PngE",
+  //       title: `Abacus Tutorial: ${query} - Basic Function`,
+  //       description: `Mock result for search: ${query}. This is a demonstration video.`,
+  //       thumbnail: "https://i.ytimg.com/vi/FTVXUG_PngE/hqdefault.jpg",
+  //       publishedAt: new Date().toISOString(),
+  //       channelTitle: "ABACUS Learning Channel",
+  //       channelId: "UC_mock_channel",
+  //       embedUrl: this.getEmbedUrl("FTVXUG_PngE"),
+  //       thumbnailUrl: this.getThumbnailUrl("FTVXUG_PngE"),
+  //     },
+  //     {
+  //       videoId: "dQw4w9WgXcQ",
+  //       title: `Advanced ${query} Techniques`,
+  //       description: `Mock advanced tutorial for: ${query}`,
+  //       thumbnail: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+  //       publishedAt: new Date().toISOString(),
+  //       channelTitle: "Education Plus",
+  //       channelId: "UC_mock_channel_2",
+  //       embedUrl: this.getEmbedUrl("dQw4w9WgXcQ"),
+  //       thumbnailUrl: this.getThumbnailUrl("dQw4w9WgXcQ"),
+  //     },
+  //   ];
 
-    return mockVideos.slice(0, parseInt(maxResults));
-  }
+  //   return mockVideos.slice(0, parseInt(maxResults));
+  // }
 
   // Get video details by ID
   async getVideoDetails(videoId) {
     try {
       if (!process.env.YOUTUBE_API_KEY) {
-        throw new Error('YouTube API key not configured');
+        throw new Error("YouTube API key not configured");
       }
 
       const response = await this.youtube.videos.list({
-        part: 'snippet,contentDetails,statistics',
-        id: videoId
+        part: "snippet,contentDetails,statistics",
+        id: videoId,
       });
 
       this.quotaUsed += 1; // Video details costs 1 quota unit
 
       if (!response.data.items || response.data.items.length === 0) {
-        throw new Error('Video not found');
+        console.error(
+          "❌ YouTube API returned no items for video ID:",
+          videoId
+        );
+        console.log(
+          "📋 YouTube API Response:",
+          JSON.stringify(response.data, null, 2)
+        );
+        throw new Error("Video not found");
       }
 
       const video = response.data.items[0];
-      
+
       return {
         id: video.id,
         title: video.snippet.title,
         description: video.snippet.description,
-        thumbnail: video.snippet.thumbnails?.maxresdefault?.url || 
-                  video.snippet.thumbnails?.high?.url ||
-                  video.snippet.thumbnails?.medium?.url,
+        thumbnail:
+          video.snippet.thumbnails?.maxresdefault?.url ||
+          video.snippet.thumbnails?.high?.url ||
+          video.snippet.thumbnails?.medium?.url,
         duration: this.parseDuration(video.contentDetails.duration),
         publishedAt: video.snippet.publishedAt,
         channelTitle: video.snippet.channelTitle,
         channelId: video.snippet.channelId,
         viewCount: parseInt(video.statistics?.viewCount || 0),
         likeCount: parseInt(video.statistics?.likeCount || 0),
-        tags: video.snippet.tags || []
+        tags: video.snippet.tags || [],
       };
-
     } catch (error) {
-      console.error('Get video details error:', error);
+      console.error("Get video details error:", error);
+      console.error("Error details:", {
+        code: error.code,
+        status: error.status,
+        message: error.message,
+        response: error.response?.data,
+      });
       throw new Error(`Failed to get video details: ${error.message}`);
     }
   }
@@ -148,13 +160,13 @@ class YouTubeService {
     try {
       // Check if video already exists
       const { data: existingVideo, error: checkError } = await supabase
-        .from('video_content')
-        .select('id')
-        .eq('youtube_video_id', youtubeVideoId)
+        .from("video_content")
+        .select("id")
+        .eq("youtube_video_id", youtubeVideoId)
         .single();
 
       if (existingVideo) {
-        throw new Error('Video already exists in database');
+        throw new Error("Video already exists in database");
       }
 
       // Get video details from YouTube
@@ -164,7 +176,7 @@ class YouTubeService {
       const videoData = {
         youtube_video_id: youtubeVideoId,
         title: videoDetails.title,
-        description: videoDetails.description || '',
+        description: videoDetails.description || "",
         duration: videoDetails.duration,
         view_count: videoDetails.viewCount,
         like_count: videoDetails.likeCount,
@@ -172,16 +184,16 @@ class YouTubeService {
         channel_id: videoDetails.channelId,
         published_date: videoDetails.publishedAt,
         tags: videoDetails.tags,
-        category: 'general', // Default category
-        difficulty_level: 'beginner', // Default difficulty
-        status: 'active',
+        category: "general", // Default category
+        difficulty_level: "beginner", // Default difficulty
+        status: "active",
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       };
 
       // Insert into database
       const { data: insertedVideo, error } = await supabase
-        .from('video_content')
+        .from("video_content")
         .insert(videoData)
         .select()
         .single();
@@ -191,9 +203,8 @@ class YouTubeService {
       }
 
       return insertedVideo;
-
     } catch (error) {
-      console.error('Sync video to database error:', error);
+      console.error("Sync video to database error:", error);
       throw error;
     }
   }
@@ -204,7 +215,7 @@ class YouTubeService {
   }
 
   // Get thumbnail URL
-  getThumbnailUrl(youtubeVideoId, quality = 'maxresdefault') {
+  getThumbnailUrl(youtubeVideoId, quality = "maxresdefault") {
     return `https://img.youtube.com/vi/${youtubeVideoId}/${quality}.jpg`;
   }
 
@@ -222,25 +233,26 @@ class YouTubeService {
 
       // Return total seconds
       return hours * 3600 + minutes * 60 + seconds;
-
     } catch (error) {
-      console.error('Duration parse error:', error);
+      console.error("Duration parse error:", error);
       return 0;
     }
   }
 
   // Format duration for display
   formatDuration(totalSeconds) {
-    if (!totalSeconds || totalSeconds === 0) return '0:00';
+    if (!totalSeconds || totalSeconds === 0) return "0:00";
 
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
 
     if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+      return `${hours}:${minutes.toString().padStart(2, "0")}:${seconds
+        .toString()
+        .padStart(2, "0")}`;
     } else {
-      return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      return `${minutes}:${seconds.toString().padStart(2, "0")}`;
     }
   }
 
@@ -261,7 +273,7 @@ class YouTubeService {
 
   // Check if quota is available
   hasQuotaAvailable(cost = 1) {
-    return (this.quotaUsed + cost) <= this.quotaLimit;
+    return this.quotaUsed + cost <= this.quotaLimit;
   }
 
   // Validate YouTube video ID format
@@ -272,7 +284,8 @@ class YouTubeService {
 
   // Extract video ID from YouTube URL
   extractVideoId(url) {
-    const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/;
+    const regex =
+      /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/;
     const match = url.match(regex);
     return match ? match[1] : null;
   }
@@ -284,17 +297,17 @@ class YouTubeService {
 
     for (const videoId of videoIds) {
       try {
-        if (!this.hasQuotaAvailable(101)) { // Search + details
-          throw new Error('YouTube API quota exceeded');
+        if (!this.hasQuotaAvailable(101)) {
+          // Search + details
+          throw new Error("YouTube API quota exceeded");
         }
 
         const video = await this.syncVideoToDatabase(videoId);
         results.push(video);
-
       } catch (error) {
         errors.push({
           videoId,
-          error: error.message
+          error: error.message,
         });
       }
     }
@@ -303,7 +316,7 @@ class YouTubeService {
       successful: results,
       failed: errors,
       quotaUsed: this.getQuotaUsed(),
-      quotaRemaining: this.getQuotaRemaining()
+      quotaRemaining: this.getQuotaRemaining(),
     };
   }
 
@@ -311,23 +324,22 @@ class YouTubeService {
   async getYouTubeCategories() {
     try {
       if (!process.env.YOUTUBE_API_KEY) {
-        throw new Error('YouTube API key not configured');
+        throw new Error("YouTube API key not configured");
       }
 
       const response = await this.youtube.videoCategories.list({
-        part: 'snippet',
-        regionCode: 'US'
+        part: "snippet",
+        regionCode: "US",
       });
 
       this.quotaUsed += 1;
 
-      return response.data.items.map(item => ({
+      return response.data.items.map((item) => ({
         id: item.id,
-        title: item.snippet.title
+        title: item.snippet.title,
       }));
-
     } catch (error) {
-      console.error('Get YouTube categories error:', error);
+      console.error("Get YouTube categories error:", error);
       throw new Error(`Failed to get categories: ${error.message}`);
     }
   }
@@ -336,30 +348,29 @@ class YouTubeService {
   async searchByCategory(categoryId, maxResults = 10) {
     try {
       if (!process.env.YOUTUBE_API_KEY) {
-        throw new Error('YouTube API key not configured');
+        throw new Error("YouTube API key not configured");
       }
 
       const response = await this.youtube.search.list({
-        part: 'snippet',
-        type: 'video',
+        part: "snippet",
+        type: "video",
         videoCategoryId: categoryId,
         maxResults: maxResults,
-        order: 'relevance'
+        order: "relevance",
       });
 
       this.quotaUsed += 100;
 
-      return response.data.items.map(item => ({
+      return response.data.items.map((item) => ({
         videoId: item.id.videoId,
         title: item.snippet.title,
         description: item.snippet.description,
         thumbnail: item.snippet.thumbnails?.high?.url,
         publishedAt: item.snippet.publishedAt,
-        channelTitle: item.snippet.channelTitle
+        channelTitle: item.snippet.channelTitle,
       }));
-
     } catch (error) {
-      console.error('Search by category error:', error);
+      console.error("Search by category error:", error);
       throw new Error(`Category search failed: ${error.message}`);
     }
   }
@@ -369,31 +380,30 @@ class YouTubeService {
     try {
       if (!process.env.YOUTUBE_API_KEY) {
         return {
-          status: 'warning',
-          message: 'YouTube API key not configured',
-          quota: { used: 0, remaining: this.quotaLimit }
+          status: "warning",
+          message: "YouTube API key not configured",
+          quota: { used: 0, remaining: this.quotaLimit },
         };
       }
 
       // Simple API test
       await this.youtube.search.list({
-        part: 'snippet',
-        q: 'test',
-        type: 'video',
-        maxResults: 1
+        part: "snippet",
+        q: "test",
+        type: "video",
+        maxResults: 1,
       });
 
       return {
-        status: 'healthy',
-        message: 'YouTube API is working',
-        quota: { used: this.quotaUsed, remaining: this.getQuotaRemaining() }
+        status: "healthy",
+        message: "YouTube API is working",
+        quota: { used: this.quotaUsed, remaining: this.getQuotaRemaining() },
       };
-
     } catch (error) {
       return {
-        status: 'error',
+        status: "error",
         message: `YouTube API error: ${error.message}`,
-        quota: { used: this.quotaUsed, remaining: this.getQuotaRemaining() }
+        quota: { used: this.quotaUsed, remaining: this.getQuotaRemaining() },
       };
     }
   }
