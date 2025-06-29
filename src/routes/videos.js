@@ -9,6 +9,7 @@ const {
   updateVideo,
   deleteVideo,
   updateVideoStatus,
+  bulkUpdateUsers,
   bulkDeleteVideos,
   getVideoStats
 } = require('../controllers/videos');

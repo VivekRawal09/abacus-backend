@@ -34,6 +34,7 @@ const {
   deleteUser,
   updateUserStatus,
   bulkDeleteUsers,
+  bulkUpdateUsers,  // Add this line
   exportUsers,
   validateUserCreation,
   importUsers
