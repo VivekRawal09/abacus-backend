@@ -921,6 +921,7 @@ const bulkDeleteUsers = async (req, res) => {
   }
 };
 
+
 // GET /api/users/export - Export users to CSV (NEW)
 const exportUsers = async (req, res) => {
   try {
@@ -1006,6 +1007,41 @@ const validateUserCreation = [
   body("zone_id").optional().isInt().withMessage("Valid zone ID required"),
 ];
 
+const bulkUpdateUsers = async (req, res) => {
+  try {
+    const { userIds, updateData } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'User IDs array is required',
+      });
+    }
+
+    // Update users
+    const { error } = await supabase
+      .from('users')
+      .update({
+        ...updateData,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', userIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${userIds.length} users updated successfully`,
+    });
+  } catch (error) {
+    console.error('Bulk update users error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+};
+
 module.exports = {
   getAllUsers,
   getUserStats,
@@ -1015,6 +1051,7 @@ module.exports = {
   deleteUser,
   updateUserStatus,
   bulkDeleteUsers,
+  bulkUpdateUsers,
   exportUsers,
   validateUserCreation,
   importUsers,

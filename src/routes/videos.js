@@ -67,5 +67,10 @@ router.delete('/bulk',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   bulkDeleteVideos
 );
+// Add this route BEFORE the /:id routes
+router.put('/bulk-update',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateUsers
+);
 
 module.exports = router;

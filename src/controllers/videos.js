@@ -65,6 +65,8 @@ const getAllVideos = async (req, res) => {
   }
 };
 
+
+
 const getVideoById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -478,6 +480,41 @@ const getVideoStats = async (req, res) => {
   }
 };
 
+const bulkUpdateUsers = async (req, res) => {
+  try {
+    const { userIds, updateData } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'User IDs array is required',
+      });
+    }
+
+    // Update users
+    const { error } = await supabase
+      .from('users')
+      .update({
+        ...updateData,
+        updated_at: new Date().toISOString(),
+      })
+      .in('id', userIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${userIds.length} users updated successfully`,
+    });
+  } catch (error) {
+    console.error('Bulk update users error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+};
+
 module.exports = {
   getAllVideos,
   getVideoById,
@@ -487,6 +524,7 @@ module.exports = {
   updateVideo,
   deleteVideo,
   updateVideoStatus,
+  bulkUpdateUsers,
   bulkDeleteVideos,
   getVideoStats,
 };
