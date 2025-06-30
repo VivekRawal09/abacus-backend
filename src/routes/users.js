@@ -1,6 +1,4 @@
-// =====================================================
-// FIXED USERS ROUTES (routes/users.js)
-// =====================================================
+// src/routes/users.js - FIXED VERSION
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -19,6 +17,7 @@ const upload = multer({
       'application/vnd.ms-excel', // .xls
       'application/octet-stream' // sometimes Excel files come as this
     ];
+    
     if (allowedMimes.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -136,12 +135,14 @@ router.use((error, req, res, next) => {
       });
     }
   }
+  
   if (error.message.includes('Invalid file type')) {
     return res.status(400).json({
       success: false,
       message: error.message
     });
   }
+  
   next(error);
 });
 

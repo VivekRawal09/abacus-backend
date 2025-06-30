@@ -1,6 +1,19 @@
 const { supabase } = require('../config/database');
 
-// ENHANCED getDashboardStats function
+// Utility function for error responses
+const handleAnalyticsError = (error, res, operation) => {
+  console.error(`Analytics ${operation} error:`, error);
+  
+  // Return proper error instead of fake data
+  return res.status(500).json({
+    success: false,
+    message: `Failed to fetch ${operation}`,
+    error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error',
+    timestamp: new Date().toISOString()
+  });
+};
+
+// FIXED: No more dummy data fallbacks
 const getDashboardStats = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -9,21 +22,24 @@ const getDashboardStats = async (req, res) => {
     const [
       usersResult, 
       institutesResult, 
-      videosResult, 
-      studentsResult
+      videosResult
     ] = await Promise.all([
       supabase.from('users').select('*', { count: 'exact', head: true }),
       supabase.from('institutes').select('*', { count: 'exact', head: true }),
-      supabase.from('video_content').select('*', { count: 'exact', head: true }),
-      supabase.from('students').select('*', { count: 'exact', head: true })
+      supabase.from('video_content').select('*', { count: 'exact', head: true })
     ]);
+
+    // Check for errors in basic queries
+    if (usersResult.error) throw new Error(`Users query failed: ${usersResult.error.message}`);
+    if (institutesResult.error) throw new Error(`Institutes query failed: ${institutesResult.error.message}`);
+    if (videosResult.error) throw new Error(`Videos query failed: ${videosResult.error.message}`);
 
     // Get detailed user data for role distribution and growth calculation
     const { data: users, error: usersError } = await supabase
       .from('users')
       .select('role, status, created_at, last_login');
 
-    if (usersError) throw usersError;
+    if (usersError) throw new Error(`User details query failed: ${usersError.message}`);
 
     // Calculate user statistics
     const roleStats = users.reduce((acc, user) => {
@@ -50,42 +66,50 @@ const getDashboardStats = async (req, res) => {
       u.last_login && new Date(u.last_login) > sevenDaysAgo
     ).length;
 
-    // Get video engagement data
-    const { data: progressData, error: progressError } = await supabase
-      .from('student_progress')
-      .select('watch_percentage, completed, video_id, created_at');
-
-    const videoEngagement = progressData ? {
-      total_video_views: progressData.length,
-      completed_videos: progressData.filter(p => p.completed).length,
-      average_completion: progressData.length > 0 
-        ? (progressData.reduce((sum, p) => sum + (p.watch_percentage || 0), 0) / progressData.length).toFixed(2)
-        : 0,
-      views_last_30_days: progressData.filter(p => 
-        new Date(p.created_at) > thirtyDaysAgo
-      ).length
-    } : {
+    // Get video engagement data - handle gracefully if table doesn't exist
+    let videoEngagement = {
       total_video_views: 0,
       completed_videos: 0,
       average_completion: 0,
       views_last_30_days: 0
     };
 
+    try {
+      const { data: progressData, error: progressError } = await supabase
+        .from('student_progress')
+        .select('watch_percentage, completed, video_id, created_at');
+
+      if (!progressError && progressData) {
+        videoEngagement = {
+          total_video_views: progressData.length,
+          completed_videos: progressData.filter(p => p.completed).length,
+          average_completion: progressData.length > 0 
+            ? (progressData.reduce((sum, p) => sum + (p.watch_percentage || 0), 0) / progressData.length).toFixed(2)
+            : 0,
+          views_last_30_days: progressData.filter(p => 
+            new Date(p.created_at) > thirtyDaysAgo
+          ).length
+        };
+      }
+    } catch (progressError) {
+      console.warn('Student progress data not available:', progressError.message);
+      // Continue with default values
+    }
+
     // Get video statistics
     const { data: videos, error: videosError } = await supabase
       .from('video_content')
       .select('view_count, status, category, created_at');
 
-    const videoStats = videos ? {
+    if (videosError) throw new Error(`Video stats query failed: ${videosError.message}`);
+
+    // FIXED: No hardcoded fallback values
+    const videoStats = {
       total_views: videos.reduce((sum, v) => sum + (v.view_count || 0), 0),
       active_videos: videos.filter(v => v.status === 'active').length,
       new_videos_30_days: videos.filter(v => 
         new Date(v.created_at) > thirtyDaysAgo
       ).length
-    } : {
-      total_views: 45200, // Mock data fallback
-      active_videos: videosResult.count || 0,
-      new_videos_30_days: 8
     };
 
     // Calculate growth percentages
@@ -97,7 +121,15 @@ const getDashboardStats = async (req, res) => {
       ? ((activeUsersLast7Days / usersResult.count) * 100).toFixed(1)
       : "0";
 
-    // Response matching frontend expectations
+    const videoGrowthRate = videosResult.count > 0
+      ? Math.round((videoStats.new_videos_30_days / Math.max(videosResult.count - videoStats.new_videos_30_days, 1)) * 100)
+      : 0;
+
+    const viewsGrowthRate = videoEngagement.total_video_views > 0
+      ? Math.round((videoEngagement.views_last_30_days / Math.max(videoEngagement.total_video_views - videoEngagement.views_last_30_days, 1)) * 100)
+      : 0;
+
+    // FIXED: Real data response - no fake fallbacks
     res.json({
       success: true,
       // Main stats for dashboard cards
@@ -106,11 +138,11 @@ const getDashboardStats = async (req, res) => {
       totalInstitutes: institutesResult.count || 0,
       monthlyViews: videoStats.total_views.toLocaleString(),
       
-      // Growth metrics
+      // Growth metrics - real calculations
       usersChange: `+${userGrowthRate}%`,
-      videosChange: `+${Math.round((videoStats.new_videos_30_days / Math.max(videosResult.count - videoStats.new_videos_30_days, 1)) * 100)}%`,
-      institutesChange: "+3%", // Mock - would need historical data
-      viewsChange: `+${Math.round((videoEngagement.views_last_30_days / Math.max(videoEngagement.total_video_views - videoEngagement.views_last_30_days, 1)) * 100)}%`,
+      videosChange: `+${videoGrowthRate}%`,
+      institutesChange: "+0%", // Would need historical data for real calculation
+      viewsChange: `+${viewsGrowthRate}%`,
       
       // Detailed breakdown for analytics page
       dashboard: {
@@ -118,7 +150,6 @@ const getDashboardStats = async (req, res) => {
           total_users: usersResult.count || 0,
           total_institutes: institutesResult.count || 0,
           total_videos: videosResult.count || 0,
-          total_students: studentsResult.count || 0,
           active_users: activeUsers,
           new_users_30d: newUsersLast30Days,
           engagement_rate: `${engagementRate}%`
@@ -138,68 +169,15 @@ const getDashboardStats = async (req, res) => {
           user_growth_rate: `${userGrowthRate}%`,
           engagement_trend: activeUsersLast7Days > (activeUsers * 0.7) ? "increasing" : "stable"
         }
-      }
+      },
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
-    
-    // Return mock data on error to prevent frontend crashes
-    res.json({
-      success: true,
-      totalUsers: 1234,
-      totalVideos: 567,
-      totalInstitutes: 89,
-      monthlyViews: "45.2K",
-      usersChange: "+12%",
-      videosChange: "+8%",
-      institutesChange: "+3%",
-      viewsChange: "+24%",
-      dashboard: {
-        overview: {
-          total_users: 1234,
-          total_institutes: 89,
-          total_videos: 567,
-          total_students: 987,
-          active_users: 1100,
-          new_users_30d: 145,
-          engagement_rate: "76.3%"
-        },
-        user_stats: {
-          by_role: {
-            student: 800,
-            teacher: 150,
-            parent: 200,
-            institute_admin: 75,
-            zone_manager: 8,
-            super_admin: 1
-          },
-          active_percentage: "89.1",
-          new_last_7_days: 45,
-          active_last_7_days: 856
-        },
-        video_engagement: {
-          total_video_views: 15420,
-          completed_videos: 12336,
-          average_completion: "80.0",
-          views_last_30_days: 3420
-        },
-        video_stats: {
-          total_views: 45200,
-          active_videos: 567,
-          new_videos_30_days: 8
-        },
-        growth: {
-          new_users_this_month: 145,
-          user_growth_rate: "12.5%",
-          engagement_trend: "increasing"
-        }
-      }
-    });
+    return handleAnalyticsError(error, res, 'dashboard statistics');
   }
 };
 
-// YOUR ORIGINAL getUserEngagement function (recreated)
 const getUserEngagement = async (req, res) => {
   try {
     // Get user login frequency
@@ -207,7 +185,7 @@ const getUserEngagement = async (req, res) => {
       .from('users')
       .select('last_login, created_at, role');
 
-    if (usersError) throw usersError;
+    if (usersError) throw new Error(`User engagement query failed: ${usersError.message}`);
 
     // Calculate engagement metrics
     const now = new Date();
@@ -234,33 +212,47 @@ const getUserEngagement = async (req, res) => {
         engagement_rate_month: users.length > 0 
           ? ((activeLastMonth / users.length) * 100).toFixed(1)
           : 0
-      }
+      },
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error('Get user engagement error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    return handleAnalyticsError(error, res, 'user engagement');
   }
 };
 
-// YOUR ORIGINAL getVideoPerformance function (recreated)
 const getVideoPerformance = async (req, res) => {
   try {
     // Get video performance data
     const { data: videoData, error: videoError } = await supabase
       .from('video_content')
       .select(`
-        id, title, view_count, like_count, category, difficulty_level,
-        student_progress(watch_percentage, completed)
+        id, title, view_count, like_count, category, difficulty_level
       `);
 
-    if (videoError) throw videoError;
+    if (videoError) throw new Error(`Video performance query failed: ${videoError.message}`);
+
+    // Try to get progress data, but don't fail if table doesn't exist
+    let progressDataMap = {};
+    try {
+      const { data: progressData, error: progressError } = await supabase
+        .from('student_progress')
+        .select('video_id, watch_percentage, completed');
+
+      if (!progressError && progressData) {
+        // Group progress by video_id
+        progressDataMap = progressData.reduce((acc, progress) => {
+          if (!acc[progress.video_id]) acc[progress.video_id] = [];
+          acc[progress.video_id].push(progress);
+          return acc;
+        }, {});
+      }
+    } catch (progressError) {
+      console.warn('Student progress data not available:', progressError.message);
+    }
 
     const videoPerformance = videoData.map(video => {
-      const progressData = video.student_progress || [];
+      const progressData = progressDataMap[video.id] || [];
       const completionRate = progressData.length > 0
         ? (progressData.filter(p => p.completed).length / progressData.length * 100).toFixed(1)
         : 0;
@@ -287,19 +279,15 @@ const getVideoPerformance = async (req, res) => {
 
     res.json({
       success: true,
-      video_performance: videoPerformance
+      video_performance: videoPerformance,
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error('Get video performance error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    return handleAnalyticsError(error, res, 'video performance');
   }
 };
 
-// NEW FUNCTIONS
 const getInstitutePerformance = async (req, res) => {
   try {
     const { institute_id } = req.query;
@@ -318,12 +306,12 @@ const getInstitutePerformance = async (req, res) => {
 
     const { data: institutes, error: instituteError } = await instituteQuery;
 
-    if (instituteError) throw instituteError;
+    if (instituteError) throw new Error(`Institute performance query failed: ${instituteError.message}`);
 
     const institutePerformance = institutes.map(institute => {
       const users = institute.users || [];
       const students = users.filter(u => u.role === 'student');
-      const teachers = users.filter(u => u.role === 'teacher');
+      const teachers = users.filter(u => u.role === 'teacher' || u.role === 'institute_admin');
       const activeUsers = users.filter(u => u.status === 'active');
 
       const lastWeek = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -348,15 +336,12 @@ const getInstitutePerformance = async (req, res) => {
 
     res.json({
       success: true,
-      institute_performance: institutePerformance
+      institute_performance: institutePerformance,
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
-    console.error('Get institute performance error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    return handleAnalyticsError(error, res, 'institute performance');
   }
 };
 
@@ -374,21 +359,28 @@ const exportAnalyticsData = async (req, res) => {
     switch (type) {
       case 'dashboard':
         // Get dashboard data for export
-        const { data: users } = await supabase.from('users').select('*');
-        const { data: videos } = await supabase.from('video_content').select('*');
-        const { data: institutes } = await supabase.from('institutes').select('*');
+        const [usersResult, videosResult, institutesResult] = await Promise.all([
+          supabase.from('users').select('*'),
+          supabase.from('video_content').select('*'),
+          supabase.from('institutes').select('*')
+        ]);
+
+        // Check for errors
+        if (usersResult.error) throw new Error(`Users export failed: ${usersResult.error.message}`);
+        if (videosResult.error) throw new Error(`Videos export failed: ${videosResult.error.message}`);
+        if (institutesResult.error) throw new Error(`Institutes export failed: ${institutesResult.error.message}`);
 
         data = {
           summary: {
-            total_users: users?.length || 0,
-            total_videos: videos?.length || 0,
-            total_institutes: institutes?.length || 0,
+            total_users: usersResult.data?.length || 0,
+            total_videos: videosResult.data?.length || 0,
+            total_institutes: institutesResult.data?.length || 0,
             generated_at: new Date().toISOString()
           },
           details: {
-            users: users || [],
-            videos: videos || [],
-            institutes: institutes || []
+            users: usersResult.data || [],
+            videos: videosResult.data || [],
+            institutes: institutesResult.data || []
           }
         };
         break;
@@ -396,7 +388,7 @@ const exportAnalyticsData = async (req, res) => {
       default:
         return res.status(400).json({
           success: false,
-          message: 'Invalid export type'
+          message: 'Invalid export type. Supported types: dashboard'
         });
     }
 
@@ -419,11 +411,7 @@ const exportAnalyticsData = async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Export analytics error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error'
-    });
+    return handleAnalyticsError(error, res, 'data export');
   }
 };
 

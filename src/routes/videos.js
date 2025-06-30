@@ -1,9 +1,5 @@
-// =====================================================
-// FIXED VIDEOS ROUTES (routes/videos.js)
-// =====================================================
 const express = require('express');
 const router = express.Router();
-
 const {
   getAllVideos,
   getVideoById,
@@ -14,10 +10,10 @@ const {
   deleteVideo,
   updateVideoStatus,
   bulkDeleteVideos,
-  bulkUpdateVideoStatus,  // ✅ CORRECT: Video status function
+  bulkUpdateVideoStatus, // ✅ CORRECT: Video status function (not user function)
   getVideoStats
+  // ❌ REMOVED: bulkUpdateUsers (was wrong import)
 } = require('../controllers/videos');
-
 const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 // All routes require authentication
@@ -44,7 +40,7 @@ router.get('/stats',
 // BULK ROUTES - MUST come before /:id routes
 router.put('/bulk-status',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkUpdateVideoStatus
+  bulkUpdateVideoStatus  // ✅ CORRECT: Video status function
 );
 
 router.delete('/bulk',

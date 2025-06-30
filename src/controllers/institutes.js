@@ -91,7 +91,9 @@ const getInstituteById = async (req, res) => {
   }
 };
  
-// POST /api/institutes - Create new institute (CLEAN PRODUCTION VERSION)
+// src/controllers/institutes.js - FIXED createInstitute function
+// Replace only the createInstitute function in your existing file
+
 const createInstitute = async (req, res) => {
   try {
     const {
@@ -107,7 +109,7 @@ const createInstitute = async (req, res) => {
       established_date
     } = req.body;
 
-    // Validate required fields
+    // ✅ FIXED: Validate required fields based on database constraints
     if (!name || !city || !state) {
       return res.status(400).json({
         success: false,
@@ -115,12 +117,18 @@ const createInstitute = async (req, res) => {
       });
     }
 
+    // ✅ FIXED: Generate code if not provided
+    const instituteCode = code || `INST${Date.now().toString().slice(-6)}`;
+
+    // ✅ FIXED: Provide default address if not provided  
+    const instituteAddress = address || `${city}, ${state}`;
+
     // Check if institute code already exists (if provided)
     if (code) {
       const { data: existingInstitute } = await supabase
         .from('institutes')
         .select('code')
-        .eq('code', code)
+        .eq('code', instituteCode)
         .single();
 
       if (existingInstitute) {
@@ -131,18 +139,18 @@ const createInstitute = async (req, res) => {
       }
     }
 
-    // Create institute
+    // ✅ FIXED: Create institute with all required fields
     const { data: newInstitute, error } = await supabase
       .from('institutes')
       .insert({
         name,
-        code,
-        address,
+        code: instituteCode,
+        address: instituteAddress, // ✅ Always provide address
         city,
         state,
-        pincode,
-        phone,
-        email,
+        pincode: pincode || null,
+        phone: phone || null,
+        email: email || null,
         zone_id: zone_id || null,
         established_date: established_date || null,
         status: 'active',
@@ -155,7 +163,8 @@ const createInstitute = async (req, res) => {
       console.error('Create institute error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to create institute'
+        message: 'Failed to create institute',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
 

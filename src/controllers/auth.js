@@ -2,12 +2,33 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { supabase } = require('../config/database');
 
+// Validate JWT secret on startup
+if (!process.env.JWT_SECRET) {
+  console.error('❌ JWT_SECRET environment variable is required');
+  console.error('💡 Generate a secure secret: node -p "require(\'crypto\').randomBytes(32).toString(\'hex\')"');
+  process.exit(1);
+}
+
+if (process.env.JWT_SECRET.length < 32) {
+  console.error('❌ JWT_SECRET must be at least 32 characters long');
+  process.exit(1);
+}
+
 const generateToken = (userId, email, role) => {
-  return jwt.sign(
-    { userId, email, role },
-    process.env.JWT_SECRET,
-    { expiresIn: '24h' }
-  );
+  try {
+    return jwt.sign(
+      { userId, email, role },
+      process.env.JWT_SECRET,
+      { 
+        expiresIn: '24h',
+        issuer: 'abacus-backend',
+        audience: 'abacus-frontend'
+      }
+    );
+  } catch (error) {
+    console.error('❌ Token generation failed:', error);
+    throw new Error('Failed to generate authentication token');
+  }
 };
 
 const login = async (req, res) => {
@@ -15,10 +36,20 @@ const login = async (req, res) => {
     const { email, password } = req.body;
     console.log('🔍 Login attempt for:', email);
 
+    // Input validation
     if (!email || !password) {
       return res.status(400).json({
         success: false,
         message: 'Email and password are required'
+      });
+    }
+
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid email format'
       });
     }
 
@@ -29,16 +60,16 @@ const login = async (req, res) => {
         *,
         institutes(name)
       `)
-      .eq('email', email)
+      .eq('email', email.toLowerCase().trim())
       .eq('status', 'active');
 
-    console.log('📊 Database query result:', { users, error });
+    console.log('📊 Database query result:', { userCount: users?.length, error });
 
     if (error) {
       console.error('Database error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Database error'
+        message: 'Database error occurred'
       });
     }
 
@@ -52,11 +83,10 @@ const login = async (req, res) => {
 
     const user = users[0];
     console.log('✅ User found:', { id: user.id, email: user.email, role: user.role });
-    console.log('🔐 Password hash from DB:', user.password_hash);
 
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    console.log('🔑 Password comparison result:', isPasswordValid);
+    console.log('🔑 Password validation:', isPasswordValid ? 'SUCCESS' : 'FAILED');
 
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -73,6 +103,8 @@ const login = async (req, res) => {
 
     // Generate JWT token
     const token = generateToken(user.id, user.email, user.role);
+
+    console.log('✅ Login successful for:', user.email);
 
     res.json({
       success: true,
@@ -102,11 +134,11 @@ const login = async (req, res) => {
 const getProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    
+
     const { data: user, error } = await supabase
       .from('users')
       .select(`
-        id, first_name, last_name, email, role, phone, 
+        id, first_name, last_name, email, role, phone,
         status, created_at, date_of_birth, gender,
         institutes(name),
         zones(name)
