@@ -776,6 +776,7 @@ const updateUser = async (req, res) => {
 };
 
 // DELETE /api/users/:id - Delete user (NEW)
+// DELETE /api/users/:id - Delete user (HARD DELETE)
 const deleteUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -802,13 +803,10 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    // Soft delete - set status to inactive instead of hard delete
+    // HARD DELETE - Actually remove from database
     const { error } = await supabase
       .from("users")
-      .update({
-        status: "inactive",
-        updated_at: new Date().toISOString(),
-      })
+      .delete()  // ← Changed from update to delete
       .eq("id", id);
 
     if (error) {
@@ -832,16 +830,39 @@ const deleteUser = async (req, res) => {
   }
 };
 
-// PUT /api/users/:id/status - Toggle user status (NEW)
+// PUT /api/users/:id/status - Toggle user status (SOFT DELETE - Deactivate)
 const updateUserStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { is_active } = req.body;
 
+    // Check if user exists
+    const { data: existingUser, error: fetchError } = await supabase
+      .from("users")
+      .select("id, role")
+      .eq("id", id)
+      .single();
+
+    if (fetchError || !existingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // Prevent deactivation of super_admin users
+    if (existingUser.role === "super_admin" && !is_active) {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot deactivate super admin users",
+      });
+    }
+
+    // SOFT DELETE - Update status (deactivate/activate)
     const { data: updatedUser, error } = await supabase
       .from("users")
       .update({
-        status: is_active ? "active" : "inactive",
+        status: is_active ? "active" : "inactive",  // ← Soft delete via status
         updated_at: new Date().toISOString(),
       })
       .eq("id", id)
@@ -849,9 +870,10 @@ const updateUserStatus = async (req, res) => {
       .single();
 
     if (error) {
-      return res.status(404).json({
+      console.error("Update user status error:", error);
+      return res.status(500).json({
         success: false,
-        message: "User not found",
+        message: "Failed to update user status",
       });
     }
 
@@ -869,7 +891,7 @@ const updateUserStatus = async (req, res) => {
   }
 };
 
-// DELETE /api/users/bulk - Bulk delete users (NEW)
+// DELETE /api/users/bulk - Bulk delete users (HARD DELETE)
 const bulkDeleteUsers = async (req, res) => {
   try {
     const { userIds } = req.body;
@@ -894,16 +916,14 @@ const bulkDeleteUsers = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Cannot delete super admin users",
+        protected_users: superAdmins,
       });
     }
 
-    // Soft delete - set status to inactive
+    // HARD DELETE - Actually remove from database
     const { error } = await supabase
       .from("users")
-      .update({
-        status: "inactive",
-        updated_at: new Date().toISOString(),
-      })
+      .delete()  // ← Changed from update to delete
       .in("id", userIds);
 
     if (error) throw error;
@@ -911,6 +931,10 @@ const bulkDeleteUsers = async (req, res) => {
     res.json({
       success: true,
       message: `${userIds.length} users deleted successfully`,
+      data: {
+        processed_count: userIds.length,
+        total_requested: userIds.length,
+      }
     });
   } catch (error) {
     console.error("Bulk delete users error:", error);
@@ -921,6 +945,71 @@ const bulkDeleteUsers = async (req, res) => {
   }
 };
 
+// ADD NEW FUNCTION: Bulk status update (for deactivate/activate)
+const bulkUpdateUserStatus = async (req, res) => {
+  try {
+    const { userIds, is_active } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "User IDs array is required",
+      });
+    }
+
+    if (typeof is_active !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: "is_active must be a boolean value",
+      });
+    }
+
+    // Check for super_admin users if trying to deactivate
+    if (!is_active) {
+      const { data: users, error: fetchError } = await supabase
+        .from("users")
+        .select("id, role")
+        .in("id", userIds);
+
+      if (fetchError) throw fetchError;
+
+      const superAdmins = users.filter((u) => u.role === "super_admin");
+      if (superAdmins.length > 0) {
+        return res.status(403).json({
+          success: false,
+          message: "Cannot deactivate super admin users",
+          protected_users: superAdmins,
+        });
+      }
+    }
+
+    // SOFT UPDATE - Update status for bulk operations
+    const { error } = await supabase
+      .from("users")
+      .update({
+        status: is_active ? "active" : "inactive",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", userIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${userIds.length} users ${is_active ? 'activated' : 'deactivated'} successfully`,
+      data: {
+        updated_count: userIds.length,
+        new_status: is_active ? 'active' : 'inactive',
+      }
+    });
+  } catch (error) {
+    console.error("Bulk update user status error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
 
 // GET /api/users/export - Export users to CSV (NEW)
 const exportUsers = async (req, res) => {
@@ -1052,6 +1141,7 @@ module.exports = {
   updateUserStatus,
   bulkDeleteUsers,
   bulkUpdateUsers,
+  bulkUpdateUserStatus,  
   exportUsers,
   validateUserCreation,
   importUsers,
