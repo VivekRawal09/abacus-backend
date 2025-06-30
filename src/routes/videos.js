@@ -1,6 +1,10 @@
+// =====================================================
+// FIXED VIDEOS ROUTES (routes/videos.js)
+// =====================================================
 const express = require('express');
 const router = express.Router();
-const { 
+
+const {
   getAllVideos,
   getVideoById,
   addVideoFromYouTube,
@@ -9,10 +13,11 @@ const {
   updateVideo,
   deleteVideo,
   updateVideoStatus,
-  bulkUpdateUsers,
   bulkDeleteVideos,
+  bulkUpdateVideoStatus,  // ✅ CORRECT: Video status function
   getVideoStats
 } = require('../controllers/videos');
+
 const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 // All routes require authentication
@@ -22,7 +27,7 @@ router.use(authenticateToken);
 router.get('/', getAllVideos);
 
 // GET /api/videos/search-youtube - Search YouTube videos
-router.get('/search-youtube', 
+router.get('/search-youtube',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   searchYouTubeVideos
 );
@@ -31,53 +36,47 @@ router.get('/search-youtube',
 router.get('/categories', getVideoCategories);
 
 // GET /api/videos/stats - Get video statistics
-router.get('/stats', 
+router.get('/stats',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   getVideoStats
+);
+
+// BULK ROUTES - MUST come before /:id routes
+router.put('/bulk-status',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateVideoStatus
+);
+
+router.delete('/bulk',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkDeleteVideos
 );
 
 // GET /api/videos/:id - Get single video by ID
 router.get('/:id', getVideoById);
 
 // POST /api/videos - Add video from YouTube
-router.post('/', 
+router.post('/',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   addVideoFromYouTube
 );
 
 // PUT /api/videos/:id - Update video
-router.put('/:id', 
+router.put('/:id',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   updateVideo
 );
 
-// ADD this route BEFORE the /:id routes:
-router.put('/bulk-status',
-  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkUpdateVideoStatus
-);
-
 // PUT /api/videos/:id/status - Toggle video status
-router.put('/:id/status', 
+router.put('/:id/status',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   updateVideoStatus
 );
 
-// DELETE /api/videos/:id - Delete single video (soft delete)
-router.delete('/:id', 
+// DELETE /api/videos/:id - Delete single video
+router.delete('/:id',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   deleteVideo
-);
-
-// DELETE /api/videos/bulk - Bulk delete videos
-router.delete('/bulk', 
-  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkDeleteVideos
-);
-// Add this route BEFORE the /:id routes
-router.put('/bulk-update',
-  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkUpdateUsers
 );
 
 module.exports = router;

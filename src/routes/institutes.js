@@ -1,15 +1,21 @@
+// =====================================================
+// FIXED INSTITUTES ROUTES (routes/institutes.js)
+// =====================================================
 const express = require('express');
 const router = express.Router();
+
 const {
   getAllInstitutes,
   getInstituteById,
   getInstituteStats,
-  createInstitute,        // NEW - FIX FOR 404 ERROR
-  updateInstitute,        // NEW
-  deleteInstitute,        // NEW
-  updateInstituteStatus,  // NEW
-  bulkDeleteInstitutes    // NEW
+  createInstitute,
+  updateInstitute,
+  deleteInstitute,
+  updateInstituteStatus,
+  bulkUpdateInstituteStatus,
+  bulkDeleteInstitutes
 } = require('../controllers/institutes');
+
 const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 // Apply authentication to all routes
@@ -27,46 +33,45 @@ router.get('/stats',
   getInstituteStats
 );
 
+// BULK ROUTES - MUST come before /:id routes
+router.put('/bulk-status',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateInstituteStatus
+);
+
+router.delete('/bulk',
+  authorizeRoles('super_admin', 'zone_manager'),
+  bulkDeleteInstitutes
+);
+
 // GET /api/institutes/:id - Get single institute by ID
 router.get('/:id',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
   getInstituteById
 );
 
-// POST /api/institutes - Create new institute (FIX: THIS WAS MISSING - CAUSING 404)
+// POST /api/institutes - Create new institute
 router.post('/',
   authorizeRoles('super_admin', 'zone_manager'),
   createInstitute
 );
 
-// ADD this route BEFORE the /:id routes:
-router.put('/bulk-status',
-  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkUpdateInstituteStatus
-);
-
-// PUT /api/institutes/:id - Update institute (FIX: THIS WAS MISSING)
+// PUT /api/institutes/:id - Update institute
 router.put('/:id',
   authorizeRoles('super_admin', 'zone_manager'),
   updateInstitute
 );
 
-// PUT /api/institutes/:id/status - Toggle institute status (FIX: THIS WAS MISSING)
+// PUT /api/institutes/:id/status - Toggle institute status
 router.put('/:id/status',
   authorizeRoles('super_admin', 'zone_manager'),
   updateInstituteStatus
 );
 
-// DELETE /api/institutes/:id - Delete single institute (FIX: THIS WAS MISSING)
+// DELETE /api/institutes/:id - Delete single institute
 router.delete('/:id',
   authorizeRoles('super_admin', 'zone_manager'),
   deleteInstitute
-);
-
-// DELETE /api/institutes/bulk - Bulk delete institutes (FIX: THIS WAS MISSING)
-router.delete('/bulk',
-  authorizeRoles('super_admin', 'zone_manager'),
-  bulkDeleteInstitutes
 );
 
 module.exports = router;

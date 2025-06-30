@@ -1,9 +1,12 @@
+// =====================================================
+// FIXED USERS ROUTES (routes/users.js)
+// =====================================================
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 
 // Configure multer for file uploads
-const upload = multer({ 
+const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit
@@ -16,7 +19,6 @@ const upload = multer({
       'application/vnd.ms-excel', // .xls
       'application/octet-stream' // sometimes Excel files come as this
     ];
-    
     if (allowedMimes.includes(file.mimetype)) {
       cb(null, true);
     } else {
@@ -34,7 +36,8 @@ const {
   deleteUser,
   updateUserStatus,
   bulkDeleteUsers,
-  bulkUpdateUsers,  // Add this line
+  bulkUpdateUsers,
+  bulkUpdateUserStatus,
   exportUsers,
   validateUserCreation,
   importUsers
@@ -70,6 +73,22 @@ router.get('/export',
   exportUsers
 );
 
+// BULK ROUTES - MUST come before /:id routes
+router.put('/bulk-status',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateUserStatus
+);
+
+router.put('/bulk-update',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateUsers
+);
+
+router.delete('/bulk',
+  authorizeRoles('super_admin', 'zone_manager'),
+  bulkDeleteUsers
+);
+
 // GET /api/users/:id - Get single user by ID
 router.get('/:id',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
@@ -95,27 +114,10 @@ router.put('/:id/status',
   updateUserStatus
 );
 
-// DELETE /api/users/:id - Delete single user (soft delete)
+// DELETE /api/users/:id - Delete single user
 router.delete('/:id',
   authorizeRoles('super_admin', 'zone_manager'),
   deleteUser
-);
-
-// Add this route BEFORE the /:id routes
-router.put('/bulk-update',
-  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkUpdateUsers
-);
-
-// DELETE /api/users/bulk - Bulk delete users
-router.delete('/bulk',
-  authorizeRoles('super_admin', 'zone_manager'),
-  bulkDeleteUsers
-);
-
-router.put('/bulk-status',
-  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  bulkUpdateUserStatus
 );
 
 // Error handling middleware for multer
@@ -134,14 +136,12 @@ router.use((error, req, res, next) => {
       });
     }
   }
-  
   if (error.message.includes('Invalid file type')) {
     return res.status(400).json({
       success: false,
       message: error.message
     });
   }
-  
   next(error);
 });
 
