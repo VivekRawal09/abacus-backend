@@ -51,6 +51,12 @@ router.put('/:id',
   updateVideo
 );
 
+// ADD this route BEFORE the /:id routes:
+router.put('/bulk-status',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateVideoStatus
+);
+
 // PUT /api/videos/:id/status - Toggle video status
 router.put('/:id/status', 
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),

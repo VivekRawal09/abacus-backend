@@ -90,7 +90,7 @@ const getInstituteById = async (req, res) => {
     });
   }
 };
-
+ 
 // POST /api/institutes - Create new institute (CLEAN PRODUCTION VERSION)
 const createInstitute = async (req, res) => {
   try {
@@ -271,7 +271,7 @@ const updateInstitute = async (req, res) => {
   }
 };
 
-// DELETE /api/institutes/:id - Delete institute (NEW)
+// REPLACE deleteInstitute function in institutes controller:
 const deleteInstitute = async (req, res) => {
   try {
     const { id } = req.params;
@@ -290,13 +290,26 @@ const deleteInstitute = async (req, res) => {
       });
     }
 
-    // Soft delete - set status to inactive
+    // Check if institute has users (prevent deletion if it has users)
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('institute_id', id)
+      .limit(1);
+
+    if (usersError) {
+      console.error('Error checking institute users:', usersError);
+    } else if (users && users.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete institute with existing users. Please reassign or remove users first.'
+      });
+    }
+
+    // HARD DELETE - Actually remove from database
     const { error } = await supabase
       .from('institutes')
-      .update({ 
-        status: 'inactive',
-        updated_at: new Date().toISOString()
-      })
+      .delete()  // ← Changed from update to delete
       .eq('id', id);
 
     if (error) {
@@ -359,7 +372,8 @@ const updateInstituteStatus = async (req, res) => {
   }
 };
 
-// DELETE /api/institutes/bulk - Bulk delete institutes (NEW)
+
+// REPLACE bulkDeleteInstitutes function in institutes controller:
 const bulkDeleteInstitutes = async (req, res) => {
   try {
     const { instituteIds } = req.body;
@@ -371,20 +385,38 @@ const bulkDeleteInstitutes = async (req, res) => {
       });
     }
 
-    // Soft delete - set status to inactive
+    // Check if any institutes have users
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('institute_id')
+      .in('institute_id', instituteIds);
+
+    if (usersError) {
+      console.error('Error checking institute users:', usersError);
+    } else if (users && users.length > 0) {
+      const institutesWithUsers = [...new Set(users.map(u => u.institute_id))];
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete institutes with existing users. Institutes with users: ${institutesWithUsers.join(', ')}`,
+        institutes_with_users: institutesWithUsers
+      });
+    }
+
+    // HARD DELETE - Actually remove from database
     const { error } = await supabase
       .from('institutes')
-      .update({ 
-        status: 'inactive',
-        updated_at: new Date().toISOString()
-      })
+      .delete()  // ← Changed from update to delete
       .in('id', instituteIds);
 
     if (error) throw error;
 
     res.json({
       success: true,
-      message: `${instituteIds.length} institutes deleted successfully`
+      message: `${instituteIds.length} institutes deleted successfully`,
+      data: {
+        processed_count: instituteIds.length,
+        total_requested: instituteIds.length,
+      }
     });
 
   } catch (error) {
@@ -392,6 +424,53 @@ const bulkDeleteInstitutes = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Internal server error'
+    });
+  }
+};
+
+// ADD NEW FUNCTION: Bulk status update for institutes
+const bulkUpdateInstituteStatus = async (req, res) => {
+  try {
+    const { instituteIds, is_active } = req.body;
+
+    if (!instituteIds || !Array.isArray(instituteIds) || instituteIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Institute IDs array is required",
+      });
+    }
+
+    if (typeof is_active !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: "is_active must be a boolean value",
+      });
+    }
+
+    // SOFT UPDATE - Update status for bulk operations
+    const { error } = await supabase
+      .from("institutes")
+      .update({
+        status: is_active ? "active" : "inactive",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", instituteIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${instituteIds.length} institutes ${is_active ? 'activated' : 'deactivated'} successfully`,
+      data: {
+        updated_count: instituteIds.length,
+        new_status: is_active ? 'active' : 'inactive',
+      }
+    });
+  } catch (error) {
+    console.error("Bulk update institute status error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
     });
   }
 };
@@ -462,6 +541,7 @@ module.exports = {
   createInstitute,         // NEW
   updateInstitute,         // NEW  
   deleteInstitute,         // NEW
-  updateInstituteStatus,   // NEW
+  updateInstituteStatus, 
+  bulkUpdateInstituteStatus,  // NEW
   bulkDeleteInstitutes     // NEW
 };

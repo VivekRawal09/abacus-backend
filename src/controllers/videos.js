@@ -317,6 +317,7 @@ const updateVideo = async (req, res) => {
   }
 };
 
+// REPLACE deleteVideo function in videos controller:
 const deleteVideo = async (req, res) => {
   try {
     const { id } = req.params;
@@ -335,13 +336,10 @@ const deleteVideo = async (req, res) => {
       });
     }
 
-    // Soft delete - set status to inactive
+    // HARD DELETE - Actually remove from database
     const { error } = await supabase
       .from("video_content")
-      .update({
-        status: "inactive",
-        updated_at: new Date().toISOString(),
-      })
+      .delete()  // ← Changed from update to delete
       .eq("id", id);
 
     if (error) {
@@ -401,6 +399,7 @@ const updateVideoStatus = async (req, res) => {
   }
 };
 
+// REPLACE bulkDeleteVideos function in videos controller:
 const bulkDeleteVideos = async (req, res) => {
   try {
     const { videoIds } = req.body;
@@ -412,13 +411,10 @@ const bulkDeleteVideos = async (req, res) => {
       });
     }
 
-    // Soft delete - set status to inactive
+    // HARD DELETE - Actually remove from database
     const { error } = await supabase
       .from("video_content")
-      .update({
-        status: "inactive",
-        updated_at: new Date().toISOString(),
-      })
+      .delete()  // ← Changed from update to delete
       .in("id", videoIds);
 
     if (error) throw error;
@@ -426,6 +422,10 @@ const bulkDeleteVideos = async (req, res) => {
     res.json({
       success: true,
       message: `${videoIds.length} videos deleted successfully`,
+      data: {
+        processed_count: videoIds.length,
+        total_requested: videoIds.length,
+      }
     });
   } catch (error) {
     console.error("Bulk delete videos error:", error);
@@ -480,6 +480,53 @@ const getVideoStats = async (req, res) => {
   }
 };
 
+// ADD NEW FUNCTION: Bulk status update for videos
+const bulkUpdateVideoStatus = async (req, res) => {
+  try {
+    const { videoIds, is_active } = req.body;
+
+    if (!videoIds || !Array.isArray(videoIds) || videoIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Video IDs array is required",
+      });
+    }
+
+    if (typeof is_active !== 'boolean') {
+      return res.status(400).json({
+        success: false,
+        message: "is_active must be a boolean value",
+      });
+    }
+
+    // SOFT UPDATE - Update status for bulk operations
+    const { error } = await supabase
+      .from("video_content")
+      .update({
+        status: is_active ? "active" : "inactive",
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", videoIds);
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      message: `${videoIds.length} videos ${is_active ? 'activated' : 'deactivated'} successfully`,
+      data: {
+        updated_count: videoIds.length,
+        new_status: is_active ? 'active' : 'inactive',
+      }
+    });
+  } catch (error) {
+    console.error("Bulk update video status error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 const bulkUpdateUsers = async (req, res) => {
   try {
     const { userIds, updateData } = req.body;
@@ -525,6 +572,7 @@ module.exports = {
   deleteVideo,
   updateVideoStatus,
   bulkUpdateUsers,
+  bulkUpdateVideoStatus,
   bulkDeleteVideos,
   getVideoStats,
 };

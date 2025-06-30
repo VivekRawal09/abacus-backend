@@ -39,6 +39,12 @@ router.post('/',
   createInstitute
 );
 
+// ADD this route BEFORE the /:id routes:
+router.put('/bulk-status',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateInstituteStatus
+);
+
 // PUT /api/institutes/:id - Update institute (FIX: THIS WAS MISSING)
 router.put('/:id',
   authorizeRoles('super_admin', 'zone_manager'),

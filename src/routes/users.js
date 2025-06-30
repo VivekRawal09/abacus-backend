@@ -113,6 +113,11 @@ router.delete('/bulk',
   bulkDeleteUsers
 );
 
+router.put('/bulk-status',
+  authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
+  bulkUpdateUserStatus
+);
+
 // Error handling middleware for multer
 router.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
