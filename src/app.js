@@ -137,12 +137,15 @@ app.use('/api/videos', require('./routes/videos'));
 app.use('/api/institutes', require('./routes/institutes'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/zones', require('./routes/zones'));
+app.use('/api/courses', require('./routes/courses'));
+app.use('/api/mobile', require('./routes/mobile'));
+app.use('/api/mobile', require('./routes/mobile'));
 
 // ✅ ENHANCED: 404 handler with helpful suggestions
 app.use('*', (req, res) => {
   console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
   
-  // Suggest similar routes
+  // Suggest similar routes`
   const suggestions = [];
   const path = req.originalUrl.toLowerCase();
   

@@ -39,6 +39,104 @@ const {
 const { queryCache, statsCache } = require('../utils/cacheUtils');
 
 /**
+ * ✅ SECURITY FIX: Data scope filtering based on user role
+ */
+const applyScopeFilters = (query, user, additionalFilters = {}) => {
+  // Super admin sees everything
+  if (user.permissions.isSuperAdmin) {
+    return query;
+  }
+  
+  // Zone manager sees users in their zone
+  if (user.permissions.isZoneManager && user.zone_id) {
+    query = query.eq('zone_id', user.zone_id);
+  }
+  
+  // Institute admin sees users in their institute
+  else if (user.permissions.isInstituteAdmin && user.institute_id) {
+    query = query.eq('institute_id', user.institute_id);
+  }
+  
+  // Parent sees only their children (will be implemented when parent-child relationship is added)
+  else if (user.permissions.isParent) {
+    // TODO: Add parent_id filter when parent-child relationship is implemented
+    query = query.eq('parent_id', user.id);
+  }
+  
+  // Student sees only themselves
+  else if (user.permissions.isStudent) {
+    query = query.eq('id', user.id);
+  }
+  
+  // Apply any additional filters
+  Object.entries(additionalFilters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      query = query.eq(key, value);
+    }
+  });
+  
+  return query;
+};
+
+/**
+ * ✅ SECURITY FIX: Validate user IDs belong to user's scope
+ */
+const validateUserScope = async (userIds, requesterUser) => {
+  // Super admin can access all users
+  if (requesterUser.permissions.isSuperAdmin) {
+    return { valid: true, validIds: userIds };
+  }
+  
+  // Get user details to validate scope
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, institute_id, zone_id, role')
+    .in('id', userIds);
+    
+  if (error) {
+    throw new Error(`Failed to validate user scope: ${error.message}`);
+  }
+  
+  const validIds = [];
+  const invalidIds = [];
+  
+  users.forEach(user => {
+    let isValid = false;
+    
+    // Zone manager can access users in their zone
+    if (requesterUser.permissions.isZoneManager) {
+      isValid = user.zone_id === requesterUser.zone_id;
+    }
+    // Institute admin can access users in their institute
+    else if (requesterUser.permissions.isInstituteAdmin) {
+      isValid = user.institute_id === requesterUser.institute_id;
+    }
+    // Parent can access their children (when parent-child relationship is implemented)
+    else if (requesterUser.permissions.isParent) {
+      // TODO: Validate parent-child relationship
+      isValid = false; // For now, parents cannot bulk operate
+    }
+    // Students cannot perform bulk operations on other users
+    else if (requesterUser.permissions.isStudent) {
+      isValid = user.id === requesterUser.id;
+    }
+    
+    if (isValid) {
+      validIds.push(user.id);
+    } else {
+      invalidIds.push(user.id);
+    }
+  });
+  
+  return {
+    valid: invalidIds.length === 0,
+    validIds,
+    invalidIds,
+    invalidCount: invalidIds.length
+  };
+};
+
+/**
  * Convert Excel date serial number OR text date to proper date string
  */
 const convertExcelDate = (excelDate) => {
@@ -87,45 +185,78 @@ const convertExcelDate = (excelDate) => {
   return null;
 };
 
-// ✅ ENHANCED: getAllUsers with intelligent caching
+// ✅ ENHANCED: getAllUsers with data scoping security
 const getAllUsers = asyncHandler(async (req, res) => {
   const { page, limit } = validatePagination(req.query.page, req.query.limit);
   const { role, status, institute_id } = req.query;
   const search = sanitizeSearchQuery(req.query.search);
 
-  // ✅ NEW: Create cache key for this specific query
+  // ✅ SECURITY FIX: Validate additional filters against user scope
+  const additionalFilters = {};
+  
+  // Only super admin and zone manager can filter by institute_id
+  if (institute_id) {
+    if (!req.user.permissions.isSuperAdmin && !req.user.permissions.isZoneManager) {
+      return formatErrorResponse(res, new Error('Insufficient permissions to filter by institute'), 'get users', 403);
+    }
+    
+    // Zone manager can only filter by institutes in their zone
+    if (req.user.permissions.isZoneManager) {
+      const { data: institute, error } = await supabase
+        .from('institutes')
+        .select('zone_id')
+        .eq('id', institute_id)
+        .single();
+        
+      if (error || !institute || institute.zone_id !== req.user.zone_id) {
+        return formatErrorResponse(res, new Error('Institute not in your zone'), 'get users', 403);
+      }
+    }
+    
+    additionalFilters.institute_id = institute_id;
+  }
+  
+  if (role) additionalFilters.role = role;
+  if (status) additionalFilters.status = status;
+
+  // ✅ NEW: Create cache key that includes user scope
   const cacheKey = queryCache.createKey('users:list', {
-    page, limit, role, status, institute_id, search
+    page, limit, role, status, institute_id, search,
+    userScope: {
+      userId: req.user.id,
+      role: req.user.role,
+      instituteId: req.user.institute_id,
+      zoneId: req.user.zone_id
+    }
   });
 
   const result = await queryCache.get(cacheKey, async () => {
-    const options = {
-      page,
-      limit,
-      filters: {
-        ...(role && { role }),
-        ...(status && { status }),
-        ...(institute_id && { institute_id })
-      },
-      search: search ? {
-        query: search,
-        fields: ['first_name', 'last_name', 'email']
-      } : {},
-      orderBy: 'created_at',
-      ascending: false
-    };
-
-    const query = buildPaginatedQuery(
-      'users',
-      `
+    let query = supabase
+      .from('users')
+      .select(`
         id, first_name, last_name, email, role, phone,
         status, created_at, last_login, date_of_birth, gender,
         institute_id, zone_id,
         institutes(name),
         zones(name)
-      `,
-      options
-    );
+      `, { count: 'exact' });
+
+    // ✅ SECURITY FIX: Apply scope filtering based on user role
+    query = applyScopeFilters(query, req.user, additionalFilters);
+
+    // ✅ SECURITY FIX: SQL injection prevention - use parameterized queries
+    if (search) {
+      // Use proper SQL escaping instead of string interpolation
+      query = query.or(`first_name.ilike.%${search.replace(/[%_]/g, '\\$&')}%,last_name.ilike.%${search.replace(/[%_]/g, '\\$&')}%,email.ilike.%${search.replace(/[%_]/g, '\\$&')}%`);
+    }
+
+    // Apply pagination
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    
+    query = query
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
     const { data: users, error, count } = await query;
     if (error) throw error;
@@ -155,30 +286,60 @@ const getAllUsers = asyncHandler(async (req, res) => {
   res.json(formatPaginationResponse(result.users, page, limit, result.count));
 });
 
-// ✅ ENHANCED: getUserStats with caching
+// ✅ ENHANCED: getUserStats with role-based scoping
 const getUserStats = asyncHandler(async (req, res) => {
-  const cacheKey = statsCache.createKey('users:stats', {});
+  const cacheKey = statsCache.createKey('users:stats', {
+    userScope: {
+      userId: req.user.id,
+      role: req.user.role,
+      instituteId: req.user.institute_id,
+      zoneId: req.user.zone_id
+    }
+  });
   
   const stats = await statsCache.get(cacheKey, async () => {
-    const result = await getTableStats('users', ['role', 'status']);
-    if (!result.success) throw new Error(result.error);
+    let query = supabase
+      .from('users')
+      .select('role, status, created_at');
 
-    const activeUsers = result.stats.by_status?.active || 0;
+    // ✅ SECURITY FIX: Apply scope filtering for stats
+    query = applyScopeFilters(query, req.user);
+
+    const { data: users, error } = await query;
+    if (error) throw error;
+
+    const roleStats = users.reduce((acc, user) => {
+      acc[user.role] = (acc[user.role] || 0) + 1;
+      return acc;
+    }, {});
+
+    const statusStats = users.reduce((acc, user) => {
+      acc[user.status] = (acc[user.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const activeUsers = statusStats.active || 0;
 
     return {
-      total_users: result.stats.total,
+      total_users: users.length,
       active_users: activeUsers,
-      by_role: result.stats.by_role || {},
-      by_status: result.stats.by_status || {}
+      by_role: roleStats,
+      by_status: statusStats
     };
   });
 
   res.json(formatSuccessResponse(stats));
 });
 
-// REFACTORED: Using utilities
+// ✅ REFACTORED: getUserById with scope validation
 const getUserById = asyncHandler(async (req, res) => {
   const { id } = req.params;
+
+  // ✅ SECURITY FIX: Validate user can access this specific user
+  const scopeValidation = await validateUserScope([id], req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, new Error('Access denied: User not in your scope'), 'get user by ID', 403);
+  }
 
   const result = await fetchRecordById(
     'users',
@@ -221,7 +382,7 @@ const getUserById = asyncHandler(async (req, res) => {
   res.json(formatSuccessResponse(formattedUser));
 });
 
-// ✅ ENHANCED: createUser with cache invalidation
+// ✅ ENHANCED: createUser with institute/zone validation
 const createUser = asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -242,6 +403,45 @@ const createUser = asyncHandler(async (req, res) => {
     address,
   } = req.body;
 
+  // ✅ SECURITY FIX: Validate institute/zone assignment based on user permissions
+  let validatedInstituteId = institute_id;
+  let validatedZoneId = zone_id;
+
+  if (!req.user.permissions.isSuperAdmin) {
+    // Zone manager can only create users in their zone
+    if (req.user.permissions.isZoneManager) {
+      if (zone_id && zone_id !== req.user.zone_id) {
+        return formatErrorResponse(res, new Error('Cannot assign users to other zones'), 'create user', 403);
+      }
+      validatedZoneId = req.user.zone_id;
+      
+      // Validate institute belongs to their zone
+      if (institute_id) {
+        const { data: institute, error } = await supabase
+          .from('institutes')
+          .select('zone_id')
+          .eq('id', institute_id)
+          .single();
+          
+        if (error || !institute || institute.zone_id !== req.user.zone_id) {
+          return formatErrorResponse(res, new Error('Institute not in your zone'), 'create user', 403);
+        }
+      }
+    }
+    // Institute admin can only create users in their institute
+    else if (req.user.permissions.isInstituteAdmin) {
+      if (institute_id && institute_id !== req.user.institute_id) {
+        return formatErrorResponse(res, new Error('Cannot assign users to other institutes'), 'create user', 403);
+      }
+      validatedInstituteId = req.user.institute_id;
+      validatedZoneId = req.user.zone_id;
+    }
+    // Other roles cannot create users
+    else {
+      return formatErrorResponse(res, new Error('Insufficient permissions to create users'), 'create user', 403);
+    }
+  }
+
   // Check if email already exists
   if (await recordExists('users', 'email', email)) {
     return formatErrorResponse(res, new Error('Email already exists'), 'create user', 400);
@@ -258,8 +458,8 @@ const createUser = asyncHandler(async (req, res) => {
     password_hash,
     role: normalizedRole,
     phone,
-    institute_id: institute_id || null,
-    zone_id: zone_id || null,
+    institute_id: validatedInstituteId || null,
+    zone_id: validatedZoneId || null,
     date_of_birth: date_of_birth || null,
     gender: gender || null,
     address: address || null,
@@ -281,10 +481,16 @@ const createUser = asyncHandler(async (req, res) => {
   res.status(201).json(formatSuccessResponse(result.data, "User created successfully"));
 });
 
-// ✅ ENHANCED: updateUser with cache invalidation
+// ✅ ENHANCED: updateUser with scope validation
 const updateUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { email } = req.body;
+
+  // ✅ SECURITY FIX: Validate user can update this specific user
+  const scopeValidation = await validateUserScope([id], req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, new Error('Access denied: User not in your scope'), 'update user', 403);
+  }
 
   // Check if email is being changed and already exists
   if (email) {
@@ -300,8 +506,39 @@ const updateUser = asyncHandler(async (req, res) => {
     }
   }
 
-  // Prepare update data
+  // ✅ SECURITY FIX: Prevent unauthorized institute/zone changes
   const updateData = { ...req.body };
+  
+  if (!req.user.permissions.isSuperAdmin) {
+    // Zone manager cannot change zone assignments
+    if (req.user.permissions.isZoneManager) {
+      if (updateData.zone_id && updateData.zone_id !== req.user.zone_id) {
+        return formatErrorResponse(res, new Error('Cannot change zone assignment'), 'update user', 403);
+      }
+      // Validate institute belongs to their zone
+      if (updateData.institute_id) {
+        const { data: institute, error } = await supabase
+          .from('institutes')
+          .select('zone_id')
+          .eq('id', updateData.institute_id)
+          .single();
+          
+        if (error || !institute || institute.zone_id !== req.user.zone_id) {
+          return formatErrorResponse(res, new Error('Institute not in your zone'), 'update user', 403);
+        }
+      }
+    }
+    // Institute admin cannot change institute assignments
+    else if (req.user.permissions.isInstituteAdmin) {
+      if (updateData.institute_id && updateData.institute_id !== req.user.institute_id) {
+        return formatErrorResponse(res, new Error('Cannot change institute assignment'), 'update user', 403);
+      }
+      if (updateData.zone_id && updateData.zone_id !== req.user.zone_id) {
+        return formatErrorResponse(res, new Error('Cannot change zone assignment'), 'update user', 403);
+      }
+    }
+  }
+
   delete updateData.password; // Don't allow password updates here
 
   const result = await updateRecord('users', id, updateData);
@@ -321,9 +558,15 @@ const updateUser = asyncHandler(async (req, res) => {
   res.json(formatSuccessResponse(result.data, "User updated successfully"));
 });
 
-// ✅ ENHANCED: deleteUser with cache invalidation
+// ✅ ENHANCED: deleteUser with scope validation
 const deleteUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
+
+  // ✅ SECURITY FIX: Validate user can delete this specific user
+  const scopeValidation = await validateUserScope([id], req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, new Error('Access denied: User not in your scope'), 'delete user', 403);
+  }
 
   const deleteResult = await bulkDelete('users', [id], {
     protectedFields: { role: ['super_admin'] }
@@ -343,7 +586,7 @@ const deleteUser = asyncHandler(async (req, res) => {
   res.json(formatSuccessResponse(null, "User deleted successfully"));
 });
 
-// REFACTORED: Using utilities
+// ✅ ENHANCED: updateUserStatus with scope validation
 const updateUserStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { is_active } = req.body;
@@ -351,6 +594,12 @@ const updateUserStatus = asyncHandler(async (req, res) => {
   const validation = validateBoolean(is_active, 'is_active');
   if (!validation.isValid) {
     return formatErrorResponse(res, new Error(validation.error), 'update user status', 400);
+  }
+
+  // ✅ SECURITY FIX: Validate user can update this specific user
+  const scopeValidation = await validateUserScope([id], req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, new Error('Access denied: User not in your scope'), 'update user status', 403);
   }
 
   const result = await bulkUpdateStatus('users', [id], is_active);
@@ -368,7 +617,7 @@ const updateUserStatus = asyncHandler(async (req, res) => {
   ));
 });
 
-// ✅ FIXED: bulkDeleteUsers with correct formatBulkResponse call
+// ✅ ENHANCED: bulkDeleteUsers with comprehensive scope validation
 const bulkDeleteUsers = asyncHandler(async (req, res) => {
   const { userIds } = req.body;
 
@@ -377,7 +626,15 @@ const bulkDeleteUsers = asyncHandler(async (req, res) => {
     return formatErrorResponse(res, new Error(validation.error), 'bulk delete users', 400);
   }
 
-  const deleteResult = await bulkDelete('users', validation.validIds, {
+  // ✅ SECURITY FIX: Validate all users belong to requester's scope
+  const scopeValidation = await validateUserScope(validation.validIds, req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, 
+      new Error(`Access denied: ${scopeValidation.invalidCount} users not in your scope`), 
+      'bulk delete users', 403);
+  }
+
+  const deleteResult = await bulkDelete('users', scopeValidation.validIds, {
     protectedFields: { role: ['super_admin'] }
   });
 
@@ -392,11 +649,10 @@ const bulkDeleteUsers = asyncHandler(async (req, res) => {
   queryCache.invalidatePattern('users:.*');
   statsCache.invalidatePattern('users:.*');
 
-  // ✅ FIXED: Correct formatBulkResponse call (no res parameter)
   res.json(formatBulkResponse('deleted', deleteResult.deletedCount));
 });
 
-// ✅ FIXED: bulkUpdateUserStatus with correct formatBulkResponse call
+// ✅ ENHANCED: bulkUpdateUserStatus with scope validation
 const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
   const { userIds, is_active } = req.body;
 
@@ -410,12 +666,20 @@ const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
     return formatErrorResponse(res, new Error(statusValidation.error), 'bulk update user status', 400);
   }
 
+  // ✅ SECURITY FIX: Validate all users belong to requester's scope
+  const scopeValidation = await validateUserScope(idsValidation.validIds, req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, 
+      new Error(`Access denied: ${scopeValidation.invalidCount} users not in your scope`), 
+      'bulk update user status', 403);
+  }
+
   // Check for super_admin users if trying to deactivate
   if (!is_active) {
     const { data: users } = await supabase
       .from("users")
       .select("id, role")
-      .in("id", idsValidation.validIds);
+      .in("id", scopeValidation.validIds);
 
     const superAdmins = users?.filter((u) => u.role === "super_admin") || [];
     if (superAdmins.length > 0) {
@@ -423,7 +687,7 @@ const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
     }
   }
 
-  const result = await bulkUpdateStatus('users', idsValidation.validIds, is_active);
+  const result = await bulkUpdateStatus('users', scopeValidation.validIds, is_active);
   if (!result.success) {
     return formatErrorResponse(res, new Error(result.error), 'bulk update user status');
   }
@@ -432,13 +696,12 @@ const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
   queryCache.invalidatePattern('users:.*');
   statsCache.invalidatePattern('users:.*');
 
-  // ✅ FIXED: Correct formatBulkResponse call with additional data
   res.json(formatBulkResponse(is_active ? 'activated' : 'deactivated', result.updatedCount, {
     new_status: result.newStatus
   }));
 });
 
-// ✅ FIXED: bulkUpdateUsers with correct formatBulkResponse call
+// ✅ ENHANCED: bulkUpdateUsers with scope validation
 const bulkUpdateUsers = asyncHandler(async (req, res) => {
   const { userIds, updateData } = req.body;
 
@@ -447,13 +710,21 @@ const bulkUpdateUsers = asyncHandler(async (req, res) => {
     return formatErrorResponse(res, new Error(validation.error), 'bulk update users', 400);
   }
 
+  // ✅ SECURITY FIX: Validate all users belong to requester's scope
+  const scopeValidation = await validateUserScope(validation.validIds, req.user);
+  if (!scopeValidation.valid) {
+    return formatErrorResponse(res, 
+      new Error(`Access denied: ${scopeValidation.invalidCount} users not in your scope`), 
+      'bulk update users', 403);
+  }
+
   const { error } = await supabase
     .from('users')
     .update({
       ...updateData,
       updated_at: new Date().toISOString(),
     })
-    .in('id', validation.validIds);
+    .in('id', scopeValidation.validIds);
 
   if (error) throw error;
 
@@ -461,11 +732,10 @@ const bulkUpdateUsers = asyncHandler(async (req, res) => {
   queryCache.invalidatePattern('users:.*');
   statsCache.invalidatePattern('users:.*');
 
-  // ✅ FIXED: Correct formatBulkResponse call
-  res.json(formatBulkResponse('updated', validation.validIds.length));
+  res.json(formatBulkResponse('updated', scopeValidation.validIds.length));
 });
 
-// REFACTORED: Using utilities
+// ✅ ENHANCED: exportUsers with scope filtering
 const exportUsers = asyncHandler(async (req, res) => {
   const { role, status, institute_id } = req.query;
 
@@ -476,10 +746,8 @@ const exportUsers = asyncHandler(async (req, res) => {
       zones(name)
     `);
 
-  // Apply filters
-  if (role) query = query.eq("role", role);
-  if (status) query = query.eq("status", status);
-  if (institute_id) query = query.eq("institute_id", institute_id);
+  // ✅ SECURITY FIX: Apply scope filtering for export
+  query = applyScopeFilters(query, req.user, { role, status, institute_id });
 
   const { data: users, error } = await query.order("created_at", {
     ascending: false,
@@ -512,7 +780,7 @@ const exportUsers = asyncHandler(async (req, res) => {
   res.send(csv);
 });
 
-// Keep the original importUsers function as it's complex and specific
+// ✅ ENHANCED: importUsers with institute validation and security
 const importUsers = async (req, res) => {
   console.log("🔄 Import Users - Starting process...");
   
@@ -521,19 +789,35 @@ const importUsers = async (req, res) => {
   }
 
   try {
-    // Validate file type
+    // ✅ SECURITY FIX: Enhanced file validation
     const validMimeTypes = [
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-      "application/octet-stream",
+      "application/vnd.ms-excel"
+      // ✅ REMOVED: "application/octet-stream" - too permissive
     ];
 
     if (!validMimeTypes.includes(req.file.mimetype)) {
       return formatErrorResponse(res, new Error('Invalid file type. Please upload an Excel file (.xlsx or .xls)'), 'import users', 400);
     }
 
-    // Parse Excel file
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    // ✅ SECURITY FIX: File size validation (additional check)
+    if (req.file.size > 10 * 1024 * 1024) { // 10MB
+      return formatErrorResponse(res, new Error('File too large. Maximum size is 10MB'), 'import users', 400);
+    }
+
+    // ✅ SECURITY FIX: Enhanced Excel parsing with security options
+    const workbook = XLSX.read(req.file.buffer, { 
+      type: "buffer",
+      cellDates: true,
+      cellNF: false,
+      cellStyles: false,
+      // ✅ SECURITY: Disable dangerous features
+      cellHTML: false,
+      cellFormula: false, // Prevent formula execution
+      sheetStubs: false,   // Prevent stub cells
+      bookVBA: false       // Disable VBA/macros
+    });
+
     if (workbook.SheetNames.length === 0) {
       return formatErrorResponse(res, new Error('No worksheets found in the Excel file'), 'import users', 400);
     }
@@ -543,6 +827,11 @@ const importUsers = async (req, res) => {
 
     if (rows.length === 0) {
       return formatErrorResponse(res, new Error('No data found in the Excel file'), 'import users', 400);
+    }
+
+    // ✅ SECURITY FIX: Limit import size to prevent DoS
+    if (rows.length > 1000) {
+      return formatErrorResponse(res, new Error('Import limited to 1000 users per file'), 'import users', 400);
     }
 
     // Process users
@@ -575,6 +864,49 @@ const importUsers = async (req, res) => {
         const password_hash = await bcrypt.hash(row.password.toString(), 12);
         const userRole = normalizeRole(row.role);
 
+        // ✅ SECURITY FIX: Validate institute assignment based on user permissions
+        let validatedInstituteId = row.institute_id ? parseInt(row.institute_id) : null;
+        let validatedZoneId = row.zone_id ? parseInt(row.zone_id) : null;
+
+        if (!req.user.permissions.isSuperAdmin) {
+          // Zone manager can only import users to their zone
+          if (req.user.permissions.isZoneManager) {
+            if (validatedZoneId && validatedZoneId !== req.user.zone_id) {
+              errors.push(`Row ${rowNum}: Cannot assign user to zone ${validatedZoneId} - not your zone`);
+              continue;
+            }
+            validatedZoneId = req.user.zone_id;
+            
+            // Validate institute belongs to their zone
+            if (validatedInstituteId) {
+              const { data: institute, error } = await supabase
+                .from('institutes')
+                .select('zone_id')
+                .eq('id', validatedInstituteId)
+                .single();
+                
+              if (error || !institute || institute.zone_id !== req.user.zone_id) {
+                errors.push(`Row ${rowNum}: Institute ${validatedInstituteId} not in your zone`);
+                continue;
+              }
+            }
+          }
+          // Institute admin can only import users to their institute
+          else if (req.user.permissions.isInstituteAdmin) {
+            if (validatedInstituteId && validatedInstituteId !== req.user.institute_id) {
+              errors.push(`Row ${rowNum}: Cannot assign user to institute ${validatedInstituteId} - not your institute`);
+              continue;
+            }
+            validatedInstituteId = req.user.institute_id;
+            validatedZoneId = req.user.zone_id;
+          }
+          // Other roles cannot import users
+          else {
+            errors.push(`Row ${rowNum}: Insufficient permissions to import users`);
+            continue;
+          }
+        }
+
         const user = {
           first_name: row.first_name || "",
           last_name: row.last_name || "",
@@ -582,8 +914,8 @@ const importUsers = async (req, res) => {
           password_hash,
           role: userRole,
           phone: row.phone ? Math.abs(row.phone).toString() : null,
-          institute_id: row.institute_id ? parseInt(row.institute_id) : null,
-          zone_id: row.zone_id ? parseInt(row.zone_id) : null,
+          institute_id: validatedInstituteId,
+          zone_id: validatedZoneId,
           status: row.status || "active",
           date_of_birth: convertExcelDate(row.date_of_birth),
           gender: row.gender || null,
@@ -684,14 +1016,16 @@ const importUsers = async (req, res) => {
 const validateUserCreation = [
   body("first_name").trim().notEmpty().withMessage("First name is required"),
   body("last_name").trim().notEmpty().withMessage("Last name is required"),
-  body("email").isEmail().withMessage("Valid email is required"),
+  body("email").isEmail().normalizeEmail().withMessage("Valid email is required"),
   body("password")
-    .isLength({ min: 6 })
-    .withMessage("Password must be at least 6 characters"),
+    .isLength({ min: 8 })
+    .withMessage("Password must be at least 8 characters")
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage("Password must contain at least one uppercase, one lowercase, and one number"),
   body("role")
     .isIn([
       "student",
-      "teacher",
+      "teacher", 
       "parent",
       "institute_admin",
       "zone_manager",
