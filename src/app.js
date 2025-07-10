@@ -140,6 +140,9 @@ app.use('/api/zones', require('./routes/zones'));
 app.use('/api/courses', require('./routes/courses'));
 app.use('/api/mobile', require('./routes/mobile'));
 app.use('/api/mobile', require('./routes/mobile'));
+app.use('/api/students', require('./routes/students'));
+app.use('/api/lessons', require('./routes/lessons'));
+app.use('/api/assessments', require('./routes/assessments'));
 
 // ✅ ENHANCED: 404 handler with helpful suggestions
 app.use('*', (req, res) => {
