@@ -83,7 +83,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ ENHANCED: Health check with comprehensive system info
+// ✅ ENHANCED: Health check with comprehensive system info + Phase 2B status
 app.get('/health', (req, res) => {
   const memoryUsage = process.memoryUsage();
   const uptime = process.uptime();
@@ -102,6 +102,8 @@ app.get('/health', (req, res) => {
     success: true,
     status: 'healthy',
     message: 'ABACUS Learning Platform API is running optimally',
+    version: '2.0.0',
+    phase: 'Phase 2B Complete',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     server: {
@@ -120,14 +122,28 @@ app.get('/health', (req, res) => {
       statsHitRate: cacheStats.stats.hitRate,
       publicHitRate: cacheStats.public.hitRate
     },
+    endpoints: {
+      total: 94, // 72 from Phase 1 + 22 from Phase 2B
+      phase_1: 72,
+      phase_2b: 22,
+      new_systems: ['exercises', 'notifications', 'assignments']
+    },
     features: {
       compression: '✅ Enabled',
       monitoring: '✅ Enabled',
       caching: '✅ Enabled',
-      rateLimit: '✅ Planned'
+      rateLimit: '✅ Planned',
+      exercises: '✅ Enabled',
+      notifications: '✅ Enabled',
+      assignments: '✅ Enabled'
     }
   });
 });
+
+// ✅ PHASE 2B: Import new routes
+const exerciseRoutes = require('./routes/exercises');
+const notificationRoutes = require('./routes/notifications');
+const assignmentRoutes = require('./routes/assignments');
 
 // ✅ API Routes (organized by priority)
 app.use('/api/auth', require('./routes/auth'));
@@ -138,17 +154,21 @@ app.use('/api/institutes', require('./routes/institutes'));
 app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/zones', require('./routes/zones'));
 app.use('/api/courses', require('./routes/courses'));
-app.use('/api/mobile', require('./routes/mobile'));
-app.use('/api/mobile', require('./routes/mobile'));
+app.use('/api/mobile', require('./routes/mobile'));   // ✅ FIXED: Removed duplicate
 app.use('/api/students', require('./routes/students'));
 app.use('/api/lessons', require('./routes/lessons'));
 app.use('/api/assessments', require('./routes/assessments'));
+
+// ✅ PHASE 2B: New routes
+app.use('/api/exercises', exerciseRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/assignments', assignmentRoutes);
 
 // ✅ ENHANCED: 404 handler with helpful suggestions
 app.use('*', (req, res) => {
   console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
   
-  // Suggest similar routes`
+  // Suggest similar routes
   const suggestions = [];
   const path = req.originalUrl.toLowerCase();
   
@@ -158,6 +178,9 @@ app.use('*', (req, res) => {
   if (path.includes('auth') || path.includes('login')) suggestions.push('/api/auth/login');
   if (path.includes('admin')) suggestions.push('/api/admin/performance');
   if (path.includes('health')) suggestions.push('/health');
+  if (path.includes('exercise')) suggestions.push('/api/exercises');
+  if (path.includes('notification')) suggestions.push('/api/notifications');
+  if (path.includes('assignment')) suggestions.push('/api/assignments');
   
   res.status(404).json({
     success: false,
@@ -169,6 +192,9 @@ app.use('*', (req, res) => {
       '/api/auth/login',
       '/api/users',
       '/api/videos',
+      '/api/exercises',
+      '/api/notifications',
+      '/api/assignments',
       '/api/admin/performance'
     ],
     timestamp: new Date().toISOString()
@@ -264,8 +290,8 @@ const gracefulShutdown = (signal) => {
   }
   
   // Close server gracefully
-  if (server) {
-    server.close((err) => {
+  if (global.server) {
+    global.server.close((err) => {
       if (err) {
         console.error('❌ Error during server shutdown:', err.message);
         process.exit(1);
@@ -344,6 +370,12 @@ const startServer = async () => {
       console.log('   📊 Real-time Monitoring');
       console.log('   💾 Intelligent Caching');
       console.log('   🔧 Admin Dashboard');
+      console.log('===========================================');
+      console.log('✅ PHASE 2B FEATURES ENABLED:');
+      console.log('   🏋️ Exercise System (9 endpoints)');
+      console.log('   🔔 Notification System (6 endpoints)');
+      console.log('   📝 Assignment System (7 endpoints)');
+      console.log('   📊 Total Endpoints: 94');
       console.log('===========================================');
       console.log('🎉 Server startup complete - Ready for requests!');
     });
