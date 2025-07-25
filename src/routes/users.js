@@ -67,6 +67,13 @@ const {
   validateDataScope 
 } = require('../middleware/auth');
 
+// ✅ UPDATED: Import new validation functions
+const { 
+  validateUUIDArray,  // ← CHANGED: Use UUID validation for users
+  validateBoolean, 
+  validateConfirmation 
+} = require('../utils/validationUtils');
+
 // ✅ SECURITY FIX: Apply authentication to all routes
 router.use(authenticateToken);
 
@@ -132,20 +139,29 @@ router.get('/export',
   exportUsers
 );
 
-// ✅ SECURITY FIX: Bulk operations with enhanced validation
+// ✅ FIXED: Bulk operations with standardized validation
 // IMPORTANT: Bulk routes MUST come before /:id routes to avoid conflicts
 
 router.put('/bulk-status',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  // ✅ SECURITY FIX: Additional validation middleware for bulk operations
   (req, res, next) => {
     const { userIds, is_active } = req.body;
     
-    // Validate bulk operation limits
-    if (userIds && userIds.length > 100) {
+    // ✅ FIXED: Use UUID validation instead of integer
+    const idsValidation = validateUUIDArray(userIds, 'User IDs', 100);
+    if (!idsValidation.isValid) {
       return res.status(400).json({
         success: false,
-        message: 'Bulk operations limited to 100 users at a time'
+        message: idsValidation.error
+      });
+    }
+    
+    // ✅ FIXED: Validate status
+    const statusValidation = validateBoolean(is_active, 'is_active');
+    if (!statusValidation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: statusValidation.error
       });
     }
     
@@ -153,10 +169,16 @@ router.put('/bulk-status',
     console.log('🔄 Bulk status update attempt:', {
       userId: req.user.id,
       userRole: req.user.role,
-      targetCount: userIds?.length || 0,
+      targetCount: idsValidation.count,
       newStatus: is_active,
       timestamp: new Date().toISOString()
     });
+    
+    // ✅ FIXED: Attach validated data to request
+    req.validatedBulk = {
+      ids: idsValidation.validIds,
+      count: idsValidation.count
+    };
     
     next();
   },
@@ -165,20 +187,28 @@ router.put('/bulk-status',
 
 router.put('/bulk-update',
   authorizeRoles('super_admin', 'zone_manager', 'institute_admin'),
-  // ✅ SECURITY FIX: Validate bulk update data
   (req, res, next) => {
     const { userIds, updateData } = req.body;
     
-    // Validate bulk operation limits
-    if (userIds && userIds.length > 100) {
+    // ✅ FIXED: Use UUID validation instead of integer
+    const idsValidation = validateUUIDArray(userIds, 'User IDs', 100);
+    if (!idsValidation.isValid) {
       return res.status(400).json({
         success: false,
-        message: 'Bulk operations limited to 100 users at a time'
+        message: idsValidation.error
+      });
+    }
+    
+    // ✅ FIXED: Validate update data
+    if (!updateData || typeof updateData !== 'object' || Array.isArray(updateData)) {
+      return res.status(400).json({
+        success: false,
+        message: 'updateData must be a valid object'
       });
     }
     
     // ✅ SECURITY FIX: Prevent sensitive field updates in bulk
-    const forbiddenFields = ['password_hash', 'id', 'created_at'];
+    const forbiddenFields = ['password_hash', 'id', 'created_at', 'email'];
     const attemptedForbiddenFields = forbiddenFields.filter(field => 
       updateData && updateData.hasOwnProperty(field)
     );
@@ -194,10 +224,16 @@ router.put('/bulk-update',
     console.log('🔄 Bulk update attempt:', {
       userId: req.user.id,
       userRole: req.user.role,
-      targetCount: userIds?.length || 0,
+      targetCount: idsValidation.count,
       updateFields: updateData ? Object.keys(updateData) : [],
       timestamp: new Date().toISOString()
     });
+    
+    // ✅ FIXED: Attach validated data to request
+    req.validatedBulk = {
+      ids: idsValidation.validIds,
+      count: idsValidation.count
+    };
     
     next();
   },
@@ -207,24 +243,24 @@ router.put('/bulk-update',
 router.delete('/bulk',
   // ✅ SECURITY FIX: Only super_admin and zone_manager can bulk delete
   authorizeRoles('super_admin', 'zone_manager'),
-  // ✅ SECURITY FIX: Enhanced bulk delete validation
   (req, res, next) => {
-    const { userIds } = req.body;
+    const { userIds, confirmDelete } = req.body;
     
-    // Validate bulk operation limits
-    if (userIds && userIds.length > 50) {
+    // ✅ FIXED: Use UUID validation instead of integer (smaller limit for safety)
+    const idsValidation = validateUUIDArray(userIds, 'User IDs', 50);
+    if (!idsValidation.isValid) {
       return res.status(400).json({
         success: false,
-        message: 'Bulk delete operations limited to 50 users at a time for safety'
+        message: idsValidation.error
       });
     }
     
-    // ✅ SECURITY FIX: Require explicit confirmation for bulk delete
-    const { confirmDelete } = req.body;
-    if (!confirmDelete) {
+    // ✅ FIXED: Require explicit confirmation
+    const confirmValidation = validateConfirmation(confirmDelete, 'Bulk delete');
+    if (!confirmValidation.isValid) {
       return res.status(400).json({
         success: false,
-        message: 'Bulk delete requires explicit confirmation. Include "confirmDelete": true in request body.'
+        message: confirmValidation.error
       });
     }
     
@@ -232,11 +268,17 @@ router.delete('/bulk',
     console.log('🚨 BULK DELETE attempt:', {
       userId: req.user.id,
       userRole: req.user.role,
-      targetCount: userIds?.length || 0,
-      targetIds: userIds,
+      targetCount: idsValidation.count,
+      targetIds: idsValidation.validIds,
       timestamp: new Date().toISOString(),
       confirmed: confirmDelete
     });
+    
+    // ✅ FIXED: Attach validated data to request
+    req.validatedBulk = {
+      ids: idsValidation.validIds,
+      count: idsValidation.count
+    };
     
     next();
   },

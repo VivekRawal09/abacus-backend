@@ -654,32 +654,15 @@ const bulkDeleteUsers = asyncHandler(async (req, res) => {
 
 // ✅ ENHANCED: bulkUpdateUserStatus with scope validation
 const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
-  const { userIds, is_active } = req.body;
-
-  const idsValidation = validateIdArray(userIds, 'User IDs');
-  if (!idsValidation.isValid) {
-    return formatErrorResponse(res, new Error(idsValidation.error), 'bulk update user status', 400);
-  }
-
-  const statusValidation = validateBoolean(is_active, 'is_active');
-  if (!statusValidation.isValid) {
-    return formatErrorResponse(res, new Error(statusValidation.error), 'bulk update user status', 400);
-  }
-
-  // ✅ SECURITY FIX: Validate all users belong to requester's scope
-  const scopeValidation = await validateUserScope(idsValidation.validIds, req.user);
-  if (!scopeValidation.valid) {
-    return formatErrorResponse(res, 
-      new Error(`Access denied: ${scopeValidation.invalidCount} users not in your scope`), 
-      'bulk update user status', 403);
-  }
+  const { is_active } = req.body;
+  const { ids, count } = req.validatedBulk; // ✅ NEW: Use validated data from middleware
 
   // Check for super_admin users if trying to deactivate
   if (!is_active) {
     const { data: users } = await supabase
       .from("users")
       .select("id, role")
-      .in("id", scopeValidation.validIds);
+      .in("id", ids); // ✅ CHANGED: Use validated IDs
 
     const superAdmins = users?.filter((u) => u.role === "super_admin") || [];
     if (superAdmins.length > 0) {
@@ -687,7 +670,7 @@ const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
     }
   }
 
-  const result = await bulkUpdateStatus('users', scopeValidation.validIds, is_active);
+  const result = await bulkUpdateStatus('users', ids, is_active); // ✅ CHANGED: Use validated IDs
   if (!result.success) {
     return formatErrorResponse(res, new Error(result.error), 'bulk update user status');
   }
@@ -696,22 +679,18 @@ const bulkUpdateUserStatus = asyncHandler(async (req, res) => {
   queryCache.invalidatePattern('users:.*');
   statsCache.invalidatePattern('users:.*');
 
-  res.json(formatBulkResponse(is_active ? 'activated' : 'deactivated', result.updatedCount, {
+  res.json(formatBulkResponse(is_active ? 'activated' : 'deactivated', count, { // ✅ CHANGED: Use validated count
     new_status: result.newStatus
   }));
 });
 
 // ✅ ENHANCED: bulkUpdateUsers with scope validation
 const bulkUpdateUsers = asyncHandler(async (req, res) => {
-  const { userIds, updateData } = req.body;
+  const { updateData } = req.body;
+  const { ids, count } = req.validatedBulk; // ✅ NEW: Use validated data from middleware
 
-  const validation = validateIdArray(userIds, 'User IDs');
-  if (!validation.isValid) {
-    return formatErrorResponse(res, new Error(validation.error), 'bulk update users', 400);
-  }
-
-  // ✅ SECURITY FIX: Validate all users belong to requester's scope
-  const scopeValidation = await validateUserScope(validation.validIds, req.user);
+  // ✅ SECURITY FIX: Validate all users belong to requester's scope (keep existing logic)
+  const scopeValidation = await validateUserScope(ids, req.user);
   if (!scopeValidation.valid) {
     return formatErrorResponse(res, 
       new Error(`Access denied: ${scopeValidation.invalidCount} users not in your scope`), 
@@ -724,7 +703,7 @@ const bulkUpdateUsers = asyncHandler(async (req, res) => {
       ...updateData,
       updated_at: new Date().toISOString(),
     })
-    .in('id', scopeValidation.validIds);
+    .in('id', scopeValidation.validIds); // ✅ Use scope-validated IDs
 
   if (error) throw error;
 
@@ -732,7 +711,7 @@ const bulkUpdateUsers = asyncHandler(async (req, res) => {
   queryCache.invalidatePattern('users:.*');
   statsCache.invalidatePattern('users:.*');
 
-  res.json(formatBulkResponse('updated', scopeValidation.validIds.length));
+  res.json(formatBulkResponse('updated', scopeValidation.validIds.length)); // ✅ Use actual processed count
 });
 
 // ✅ ENHANCED: exportUsers with scope filtering

@@ -7,6 +7,11 @@ const {
   validateDataScope 
 } = require('../middleware/auth');
 
+// ✅ UPDATED: Import new validation functions
+const { 
+  validateUUIDArray 
+} = require('../utils/validationUtils');
+
 // ✅ SECURITY: Apply authentication to all routes
 router.use(authenticateToken);
 
@@ -188,34 +193,30 @@ const validateReorderLessons = (req, res, next) => {
   next();
 };
 
-// ✅ VALIDATION: Bulk enrollment validation
+// ✅ FIXED: Bulk enrollment validation using new standardized validation
 const validateBulkEnrollment = (req, res, next) => {
   const { student_ids } = req.body;
   
-  if (!Array.isArray(student_ids) || student_ids.length === 0) {
+  const idsValidation = validateUUIDArray(student_ids, 'Student IDs', 100);
+  if (!idsValidation.isValid) {
     return res.status(400).json({
       success: false,
-      message: 'student_ids must be a non-empty array'
+      message: idsValidation.error
     });
   }
   
-  if (student_ids.length > 100) {
-    return res.status(400).json({
-      success: false,
-      message: 'Bulk enrollment limited to 100 students at a time'
-    });
-  }
+  console.log('👥 Student enrollment attempt:', {
+    userId: req.user.id,
+    courseId: req.params.id,
+    studentCount: idsValidation.count,
+    timestamp: new Date().toISOString()
+  });
   
-  // Validate UUID format for each student ID
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  for (const id of student_ids) {
-    if (!uuidRegex.test(id)) {
-      return res.status(400).json({
-        success: false,
-        message: `Invalid student ID format: ${id}`
-      });
-    }
-  }
+  // ✅ FIXED: Attach validated data to request
+  req.validatedBulk = {
+    ids: idsValidation.validIds,
+    count: idsValidation.count
+  };
   
   next();
 };
@@ -475,22 +476,12 @@ router.get('/:id/students',
   CoursesController.getCourseStudents
 );
 
+// ✅ FIXED: Student enrollment with standardized validation
 // 13. POST /api/courses/:id/enroll-students - Bulk enroll students
 router.post('/:id/enroll-students', 
   validateCourseId,
   requireAdmin,
-  validateBulkEnrollment,
-  (req, res, next) => {
-    // ✅ SECURITY: Log bulk enrollment attempt
-    console.log('👥 Bulk enrollment request:', {
-      userId: req.user.id,
-      userRole: req.user.role,
-      courseId: req.params.id,
-      studentCount: req.body.student_ids?.length || 0,
-      timestamp: new Date().toISOString()
-    });
-    next();
-  },
+  validateBulkEnrollment,  // ✅ This now uses the standardized validation and sets req.validatedBulk
   CoursesController.enrollStudents
 );
 

@@ -1,4 +1,4 @@
-// src/utils/validationUtils.js
+// src/utils/validationUtils.js - UPDATED WITH STANDARDIZED BULK VALIDATION
 
 /**
  * Role mapping utility - eliminates duplicate role mapping logic
@@ -11,32 +11,29 @@ const ROLE_MAPPINGS = {
   instituteadmin: "institute_admin",
   "institute admin": "institute_admin",
   admin: "institute_admin",
-  zone_manager: "institute_admin",
-  zonemanager: "institute_admin",
-  "zone manager": "institute_admin",
-  manager: "institute_admin",
+  zone_manager: "zone_manager", // ✅ FIXED: Keep zone_manager as separate role
+  zonemanager: "zone_manager",
+  "zone manager": "zone_manager",
+  manager: "zone_manager",
   super_admin: "super_admin",
   superadmin: "super_admin",
   "super admin": "super_admin",
   super: "super_admin",
 };
 
-const VALID_ROLES = ["student", "parent", "institute_admin", "super_admin"];
+const VALID_ROLES = ["student", "parent", "teacher", "institute_admin", "zone_manager", "super_admin"];
 
 /**
  * Normalize and validate user role
  */
 const normalizeRole = (role) => {
   if (!role) return "student";
-  
   const normalizedRole = role.toLowerCase().trim();
   const mappedRole = ROLE_MAPPINGS[normalizedRole] || "student";
-  
   if (!VALID_ROLES.includes(mappedRole)) {
     console.warn(`⚠️ Invalid role "${role}", defaulting to "student"`);
     return "student";
   }
-  
   return mappedRole;
 };
 
@@ -114,19 +111,118 @@ const sanitizeSearchQuery = (query) => {
 };
 
 /**
- * Validate array of IDs
+ * ✅ UPDATED: Universal ID validation for both integers and UUIDs
  */
-const validateIdArray = (ids, fieldName = 'IDs') => {
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return { isValid: false, error: `${fieldName} array is required` };
+const validateIdArray = (ids, fieldName = 'IDs', options = {}) => {
+  const { 
+    idType = 'auto',      // 'integer', 'uuid', or 'auto'
+    allowEmpty = false,   // Allow empty arrays
+    maxItems = 1000       // Maximum items allowed
+  } = options;
+
+  // Basic array validation
+  if (!ids || !Array.isArray(ids)) {
+    return { isValid: false, error: `${fieldName} must be an array` };
   }
   
-  const invalidIds = ids.filter(id => !id || isNaN(parseInt(id)));
+  if (ids.length === 0 && !allowEmpty) {
+    return { isValid: false, error: `${fieldName} array cannot be empty` };
+  }
+
+  if (ids.length > maxItems) {
+    return { isValid: false, error: `${fieldName} array cannot exceed ${maxItems} items` };
+  }
+
+  // Auto-detect ID type if not specified
+  let detectedType = idType;
+  if (idType === 'auto' && ids.length > 0) {
+    const firstId = ids[0];
+    if (typeof firstId === 'string' && firstId.includes('-') && firstId.length === 36) {
+      detectedType = 'uuid';
+    } else {
+      detectedType = 'integer';
+    }
+  }
+
+  const invalidIds = [];
+  const validIds = [];
+
+  if (detectedType === 'uuid') {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    
+    ids.forEach((id, index) => {
+      if (!id || typeof id !== 'string' || !uuidRegex.test(id)) {
+        invalidIds.push({ id, index });
+      } else {
+        validIds.push(id);
+      }
+    });
+  } else {
+    // Integer validation
+    ids.forEach((id, index) => {
+      const parsedId = parseInt(id);
+      if (!id || isNaN(parsedId) || parsedId <= 0) {
+        invalidIds.push({ id, index });
+      } else {
+        validIds.push(parsedId);
+      }
+    });
+  }
+
   if (invalidIds.length > 0) {
-    return { isValid: false, error: `Invalid ${fieldName}: ${invalidIds.join(', ')}` };
+    const invalidSample = invalidIds.slice(0, 3).map(item => item.id).join(', ');
+    const moreText = invalidIds.length > 3 ? ` and ${invalidIds.length - 3} more` : '';
+    
+    return { 
+      isValid: false, 
+      error: `Invalid ${fieldName} format: ${invalidSample}${moreText}`,
+      invalidIds: invalidIds
+    };
+  }
+
+  return { 
+    isValid: true, 
+    validIds, 
+    idType: detectedType,
+    count: validIds.length
+  };
+};
+
+/**
+ * ✅ NEW: Validate UUID format specifically
+ */
+const validateUUID = (uuid, fieldName = 'ID') => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  if (!uuid || typeof uuid !== 'string') {
+    return { isValid: false, error: `${fieldName} is required` };
   }
   
-  return { isValid: true, validIds: ids.map(id => parseInt(id)) };
+  if (!uuidRegex.test(uuid)) {
+    return { isValid: false, error: `Invalid ${fieldName} format` };
+  }
+  
+  return { isValid: true, uuid };
+};
+
+/**
+ * ✅ NEW: Validate array of UUIDs specifically
+ */
+const validateUUIDArray = (uuids, fieldName = 'IDs', maxItems = 100) => {
+  return validateIdArray(uuids, fieldName, { 
+    idType: 'uuid', 
+    maxItems 
+  });
+};
+
+/**
+ * ✅ NEW: Validate array of integers specifically
+ */
+const validateIntegerArray = (integers, fieldName = 'IDs', maxItems = 100) => {
+  return validateIdArray(integers, fieldName, { 
+    idType: 'integer', 
+    maxItems 
+  });
 };
 
 /**
@@ -138,16 +234,50 @@ const validateStatus = (status) => {
 };
 
 /**
- * Validate boolean field
+ * ✅ UPDATED: Validate boolean field with better error handling
  */
 const validateBoolean = (value, fieldName) => {
+  if (value === undefined || value === null) {
+    return { isValid: false, error: `${fieldName} is required` };
+  }
+  
   if (typeof value !== 'boolean') {
     return { isValid: false, error: `${fieldName} must be a boolean value` };
   }
+  
   return { isValid: true, value };
 };
 
+/**
+ * ✅ NEW: Validate bulk operation limits
+ */
+const validateBulkLimits = (count, operation = 'operation', maxItems = 100) => {
+  if (count > maxItems) {
+    return { 
+      isValid: false, 
+      error: `Bulk ${operation} limited to ${maxItems} items at a time` 
+    };
+  }
+  
+  return { isValid: true };
+};
+
+/**
+ * ✅ NEW: Validate confirmation for dangerous operations
+ */
+const validateConfirmation = (confirmValue, operation = 'operation') => {
+  if (!confirmValue) {
+    return { 
+      isValid: false, 
+      error: `${operation} requires explicit confirmation. Include "confirmDelete": true in request body.` 
+    };
+  }
+  
+  return { isValid: true };
+};
+
 module.exports = {
+  // Existing exports
   ROLE_MAPPINGS,
   VALID_ROLES,
   normalizeRole,
@@ -158,7 +288,16 @@ module.exports = {
   validateRequiredFields,
   validatePagination,
   sanitizeSearchQuery,
-  validateIdArray,
   validateStatus,
-  validateBoolean
+  
+  // ✅ UPDATED: Enhanced ID validation
+  validateIdArray,
+  validateBoolean,
+  
+  // ✅ NEW: Specific validation functions
+  validateUUID,
+  validateUUIDArray,
+  validateIntegerArray,
+  validateBulkLimits,
+  validateConfirmation
 };

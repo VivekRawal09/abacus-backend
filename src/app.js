@@ -164,6 +164,13 @@ app.use('/api/exercises', exerciseRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/assignments', assignmentRoutes);
 
+app.use('/api/support', require('./routes/support'));
+app.use('/api/files', require('./routes/files'));
+app.use('/api/achievements', require('./routes/achievements'));
+app.use('/api/analytics-advanced', require('./routes/analytics-advanced'));
+app.use('/api/gamification', require('./routes/gamification'));
+app.use('/api/payments', require('./routes/payments'));
+
 // ✅ ENHANCED: 404 handler with helpful suggestions
 app.use('*', (req, res) => {
   console.log(`❌ 404 - Route not found: ${req.method} ${req.originalUrl}`);
